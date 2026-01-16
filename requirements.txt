@@ -3,3 +3,4 @@ numpy
 open3d
 plotly
 noise
+yfinance

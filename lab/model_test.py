@@ -1,42 +1,30 @@
 import numpy as np
 import plotly.graph_objects as go
-from noise import pnoise2  # Perlin noise 2D
+import yfinance as yf
 
-# Generate grid points
-n_points = 100
-x = np.linspace(0, 10, n_points)
-y = np.linspace(0, 10, n_points)
-X, Y = np.meshgrid(x, y)
+stock_data = yf.download("SPY", period="1y", interval="1h")
+stock_data.columns = stock_data.columns.get_level_values(0)
+stock_data.dropna(inplace=True)
 
-# Generate "Merlin-like" noise for Z
-scale = 0.1  # frequency of noise
-Z = np.zeros_like(X)
-for i in range(n_points):
-    for j in range(n_points):
-        Z[i, j] = pnoise2(X[i, j] * scale, Y[i, j] * scale, octaves=4)
+X, Y = np.meshgrid(stock_data["Close"], stock_data.index)
+Z = stock_data["Volume"]
 
-# Flatten for Mesh3d
-X_flat = X.flatten()
-Y_flat = Y.flatten()
-Z_flat = Z.flatten()
-
-# Plot
 fig = go.Figure(data=[
-    go.Mesh3d(
-        x=X_flat,
-        y=Y_flat,
-        z=Z_flat,
-        color='lightblue',
-        opacity=0.8
+    go.Scatter3d(
+        x=stock_data.index,
+        y=stock_data["Close"],
+        z=stock_data["Volume"],
+        mode='markers',
+        marker=dict(size=2)
     )
 ])
 
 fig.update_layout(
-    title="Merlin-like Noise Surface",
+    title="3D Price-Volume-Time",
     scene=dict(
-        xaxis_title='X',
-        yaxis_title='Y',
-        zaxis_title='Z'
+        xaxis_title='Time',
+        yaxis_title='Price',
+        zaxis_title='Volume'
     )
 )
 
