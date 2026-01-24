@@ -3,3 +3,6 @@ numpy
 plotly
 noise
 yfinance
+torch>=2.0.0
+pandas
+scikit-learn
