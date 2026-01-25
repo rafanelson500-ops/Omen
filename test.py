@@ -1,140 +1,106 @@
-import torch
-import matplotlib.pyplot as plt
+"""
+Test script that samples a random 100-candle window and predicts the next candle.
+Shows predicted vs actual IsGreen value.
+"""
+
 import numpy as np
-from predictor import Predictor
-from main import SYMBOLS, TIMEFRAMES, TIME_STEPS
-from data_loader import get_data
+import pandas as pd
+from data_loader import load_boil_data
+from dataset import compute_features
+from predictor import load_model, predict_next_candle
 
-# Model parameters (must match training)
-num_features = 16
-num_symbols = len(SYMBOLS)
-num_timeframes = len(TIMEFRAMES)
 
-# Create model (same architecture as training)
-model = Predictor(
-    num_assets=num_symbols,
-    num_timeframes=num_timeframes,
-    num_features=num_features,
-    time_steps=TIME_STEPS
-)
+def main():
+    """
+    Test script:
+    1. Load BOIL data
+    2. Load trained model
+    3. Pick a random 100-candle window
+    4. Predict the next candle's IsGreen
+    5. Show actual vs predicted
+    """
+    print("=" * 70)
+    print("BOIL Candle Prediction Model - Test Script")
+    print("=" * 70)
+    
+    # Load data
+    print("\n[Step 1] Loading BOIL historical data (1h candles)...")
+    df = load_boil_data(period="60d", interval="1h")
+    df_features = compute_features(df)
+    print(f"Loaded {len(df_features)} candles")
+    
+    # Load model
+    print("\n[Step 2] Loading trained model...")
+    try:
+        model = load_model("boil_model.pkl")
+        print("Model loaded successfully")
+    except FileNotFoundError:
+        print("ERROR: Model file 'boil_model.pkl' not found.")
+        print("Please run main.py first to train the model.")
+        return
+    
+    # Pick a random 100-candle window
+    sequence_length = 10
+    # Need at least sequence_length + 1 candles (sequence + next candle)
+    # So we can pick from index 0 to len(df) - sequence_length - 1
+    max_start_idx = len(df_features) - sequence_length - 1
+    
+    if max_start_idx < 100:
+        print(f"\nNot enough data for a 100-candle window. Using all available data.")
+        window_size = max_start_idx + 1
+    else:
+        window_size = 100
+    
+    # Random start index for the 100-candle window (truly random each time)
+    window_start = np.random.randint(0, max_start_idx - window_size + 1)
+    window_end = window_start + window_size
+    
+    print(f"\n[Step 3] Selected random window: indices {window_start} to {window_end} ({window_size} candles)")
+    print(f"Date range: {df_features.index[window_start]} to {df_features.index[window_end-1]}")
+    
+    # Pick a random sequence within this window
+    # The sequence can start anywhere from window_start to window_end - sequence_length
+    sequence_start_range = (window_start, window_end - sequence_length)
+    sequence_start = np.random.randint(sequence_start_range[0], sequence_start_range[1])
+    
+    print(f"\n[Step 4] Using sequence starting at index {sequence_start}")
+    print(f"Sequence dates: {df_features.index[sequence_start]} to {df_features.index[sequence_start + sequence_length - 1]}")
+    
+    # Predict next candle
+    next_candle_idx = sequence_start + sequence_length
+    predicted_class, predicted_prob = predict_next_candle(
+        model, df_features, sequence_length=sequence_length, start_idx=sequence_start
+    )
+    
+    # Get actual next candle
+    actual_is_green = df_features.iloc[next_candle_idx]['IsGreen']
+    actual_close = df_features.iloc[next_candle_idx]['Close']
+    actual_open = df_features.iloc[next_candle_idx]['Open']
+    actual_pct_change = df_features.iloc[next_candle_idx]['PctChange']
+    
+    # Display results
+    print("\n" + "=" * 70)
+    print("PREDICTION RESULTS")
+    print("=" * 70)
+    print(f"\nNext candle date: {df_features.index[next_candle_idx]}")
+    print(f"\nPredicted IsGreen: {predicted_class} ({'Green' if predicted_class == 1 else 'Red'})")
+    print(f"Predicted probability (Green): {predicted_prob:.4f}")
+    print(f"\nActual IsGreen: {int(actual_is_green)} ({'Green' if actual_is_green == 1 else 'Red'})")
+    print(f"Actual Open: ${actual_open:.2f}")
+    print(f"Actual Close: ${actual_close:.2f}")
+    print(f"Actual PctChange: {actual_pct_change:.2f}%")
+    
+    # Check if prediction was correct
+    is_correct = predicted_class == int(actual_is_green)
+    print(f"\n{'✓ CORRECT' if is_correct else '✗ INCORRECT'} prediction")
+    print("=" * 70)
+    
+    # Show some sequence details
+    print("\nSequence details (last 3 candles in sequence):")
+    print(df_features[['Open', 'High', 'Low', 'Close', 'Volume', 'IsGreen', 'PctChange']].iloc[
+        sequence_start + sequence_length - 3:sequence_start + sequence_length
+    ])
 
-# Load trained weights
-try:
-    checkpoint = torch.load('unnormalized.pth', map_location='cpu')
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.eval()
-    print("Model loaded successfully!")
-    print(f"Model was trained for {checkpoint.get('epoch', 'unknown')} epochs")
-    print(f"Best validation loss: {checkpoint.get('val_loss', 'unknown'):.6f}")
-except Exception as e:
-    print(f"Error loading model: {e}")
-    print("Using untrained model (random weights) for testing...")
-    model.eval()
 
-# Quick test: Check if model can produce different outputs with different inputs
-print("\nTesting model architecture with random inputs...")
-test_input1 = torch.randn(1, num_symbols, num_timeframes, TIME_STEPS, num_features)
-test_input2 = torch.randn(1, num_symbols, num_timeframes, TIME_STEPS, num_features)
-with torch.no_grad():
-    test_pred1 = model(test_input1)
-    test_pred2 = model(test_input2)
-print(f"  Random input 1 predictions:\n    {test_pred1[0]}")
-print(f"  Random input 2 predictions:\n    {test_pred2[0]}")
-pred_diff = torch.abs(test_pred1 - test_pred2).mean().item()
-print(f"  Prediction difference: {pred_diff:.6f}")
-if pred_diff < 1e-5:
-    print("  ⚠️  WARNING: Model outputs are nearly identical! Architecture may have an issue.")
-else:
-    print("  ✅ Model can produce different outputs - architecture looks OK")
-
-# Load all data
-print("Loading data...")
-X, y = get_data(SYMBOLS, TIMEFRAMES, TIME_STEPS)
-print(f"Data shape: X {X.shape}, y {y.shape}")
-
-# Get predictions for all samples
-print("Making predictions...")
-X_tensor = torch.FloatTensor(X)
-
-# Debug: Check if inputs are varying
-print(f"\nInput data stats:")
-print(f"  X min: {X.min():.6f}, max: {X.max():.6f}, mean: {X.mean():.6f}, std: {X.std():.6f}")
-print(f"  X first sample range: {X[0].min():.6f} to {X[0].max():.6f}")
-print(f"  X last sample range: {X[-1].min():.6f} to {X[-1].max():.6f}")
-print(f"  Are first and last samples different? {not np.allclose(X[0], X[-1])}")
-
-with torch.no_grad():
-    predictions = model(X_tensor)  # Shape: (samples, symbols, timeframes)
-
-# Convert to numpy
-predictions = predictions.numpy()  # Shape: (samples, symbols, timeframes)
-y_actual = y  # Shape: (samples, symbols, timeframes)
-
-# Debug: Check prediction variance
-print(f"\nPrediction stats:")
-print(f"  Predictions shape: {predictions.shape}")
-print(f"  Predictions min: {predictions.min():.6f}, max: {predictions.max():.6f}")
-print(f"  Predictions mean: {predictions.mean():.6f}, std: {predictions.std():.6f}")
-print(f"  SPY predictions - min: {predictions[:, 0, 0].min():.6f}, max: {predictions[:, 0, 0].max():.6f}, std: {predictions[:, 0, 0].std():.6f}")
-print(f"  QQQ predictions - min: {predictions[:, 1, 0].min():.6f}, max: {predictions[:, 1, 0].max():.6f}, std: {predictions[:, 1, 0].std():.6f}")
-print(f"  First 5 SPY predictions: {predictions[:5, 0, 0]}")
-print(f"  First 5 QQQ predictions: {predictions[:5, 1, 0]}")
-
-# Use first timeframe (30m) for plotting, or average across timeframes
-# Using first timeframe for simplicity
-timeframe_idx = 0
-timeframe_name = TIMEFRAMES[timeframe_idx]
-
-# Extract predictions and actuals for each symbol
-# Shape: (samples,)
-spy_predicted = predictions[:, 0, timeframe_idx]  # SPY, first timeframe
-spy_actual = y_actual[:, 0, timeframe_idx]
-qqq_predicted = predictions[:, 1, timeframe_idx]  # QQQ, first timeframe
-qqq_actual = y_actual[:, 1, timeframe_idx]
-
-# Create time axis (sample indices)
-num_samples = len(spy_predicted)
-time_axis = np.arange(num_samples)
-
-# Create the plot
-plt.figure(figsize=(14, 8))
-
-# Plot SPY
-plt.plot(time_axis, spy_predicted * 100, label='SPY Predicted', 
-         color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
-plt.plot(time_axis, spy_actual * 100, label='SPY Actual', 
-         color='blue', linestyle='-', linewidth=1.5)
-
-# Plot QQQ
-plt.plot(time_axis, qqq_predicted * 100, label='QQQ Predicted', 
-         color='red', linestyle='--', linewidth=1.5, alpha=0.7)
-plt.plot(time_axis, qqq_actual * 100, label='QQQ Actual', 
-         color='red', linestyle='-', linewidth=1.5)
-
-# Add labels and title
-plt.xlabel('Sample Index', fontsize=12)
-plt.ylabel('Percent Change (%)', fontsize=12)
-plt.title(f'Predicted vs Actual Returns - {timeframe_name} Timeframe', fontsize=14, fontweight='bold')
-plt.legend(loc='best', fontsize=10)
-plt.grid(True, alpha=0.3)
-
-# Add horizontal line at 0%
-plt.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.3)
-
-# Add some statistics
-spy_mae = np.mean(np.abs(spy_predicted - spy_actual)) * 100
-qqq_mae = np.mean(np.abs(qqq_predicted - qqq_actual)) * 100
-
-# Add text box with statistics
-stats_text = f'Mean Absolute Error:\nSPY: {spy_mae:.4f}%\nQQQ: {qqq_mae:.4f}%'
-plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
-         fontsize=9, verticalalignment='top',
-         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-plt.tight_layout()
-plt.savefig('predictions_vs_actual.png', dpi=300, bbox_inches='tight')
-print(f"\nGraph saved as 'predictions_vs_actual.png'")
-print(f"SPY MAE: {spy_mae:.4f}%")
-print(f"QQQ MAE: {qqq_mae:.4f}%")
-
-plt.show()
+if __name__ == "__main__":
+    main()

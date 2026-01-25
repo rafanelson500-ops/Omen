@@ -1,43 +1,47 @@
-import data_loader
-from dataset import ModelDataset
-from predictor import Predictor
+"""
+Main script to orchestrate the training pipeline.
+Follows the steps outlined in docs.md.
+"""
+
+from data_loader import load_boil_data
 from train import train_model
 
-SYMBOLS = ["SPY", "QQQ"]
-TIMEFRAMES = ["30m", "1h", "1d"]
-TIME_STEPS = 100
-BATCH_SIZE = 32
-LEARNING_RATE = 0.001
-NUM_EPOCHS = 50
-TRAIN_SPLIT = 0.8  # 80% for training, 20% for validation
 
 def main():
-    # Load data
-    print("Loading data...")
-    X, y = data_loader.get_data(SYMBOLS, TIMEFRAMES, TIME_STEPS)
-    print(f"Data loaded: X shape {X.shape}, y shape {y.shape}")
+    """
+    Main training pipeline:
+    1. Load BOIL historical data
+    2. Compute features
+    3. Create sequences
+    4. Train model
+    5. Evaluate and save model
+    """
+    print("=" * 70)
+    print("BOIL Candle Prediction Model - Training Pipeline")
+    print("=" * 70)
     
-    # Create dataset
-    print("Creating dataset...")
-    model_dataset = ModelDataset(X, y)
+    # Step 1: Load data
+    print("\n[Step 1] Loading BOIL historical data (1h candles)...")
+    df = load_boil_data(period="60d", interval="1h")
+    print(f"Loaded {len(df)} candles")
+    print(f"Date range: {df.index[0]} to {df.index[-1]}")
     
-    # Get model dimensions from data
-    num_features = X.shape[4]  # Last dimension is features
-    num_symbols = len(SYMBOLS)
-    num_timeframes = len(TIMEFRAMES)
-    
-    # Train model
-    train_model(
-        dataset=model_dataset,
-        num_symbols=num_symbols,
-        num_timeframes=num_timeframes,
-        num_features=num_features,
-        time_steps=TIME_STEPS,
-        batch_size=BATCH_SIZE,
-        learning_rate=LEARNING_RATE,
-        num_epochs=NUM_EPOCHS,
-        train_split=TRAIN_SPLIT
+    # Steps 2-7: Train model (this handles feature computation, sequence creation, 
+    # splitting, training, evaluation, and saving)
+    print("\n[Steps 2-7] Training model...")
+    model = train_model(
+        df=df,
+        sequence_length=10,
+        test_size=0.2,
+        val_size=0.1,
+        random_state=42,
+        model_save_path="boil_model.pkl"
     )
+    
+    print("\n" + "=" * 70)
+    print("Training pipeline completed successfully!")
+    print("=" * 70)
+
 
 if __name__ == "__main__":
     main()
