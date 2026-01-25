@@ -1,0 +1,2 @@
+SYMBOL = "SPY"
+TIMEFRAME = "1m"
