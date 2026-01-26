@@ -7,3 +7,4 @@ torch>=2.0.0
 pandas
 scikit-learn
 hmmlearn
+alpaca-py
