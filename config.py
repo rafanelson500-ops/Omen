@@ -1,4 +1,0 @@
-SYMBOL = "MBAI"
-TIMEFRAME = "1m"
-D = 26
-QTY = 500

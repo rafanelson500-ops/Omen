@@ -8,3 +8,5 @@ pandas
 scikit-learn
 hmmlearn
 alpaca-py
+numba
+dotenv

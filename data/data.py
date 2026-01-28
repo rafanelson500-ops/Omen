@@ -1,11 +1,9 @@
 import yfinance as yf
-from config import SYMBOL, TIMEFRAME, D
+from config.config import SYMBOL, TIMEFRAME
 
-def get_data(training):
-    if training:
-        df = yf.download(SYMBOL, start=f"2026-01-{D}", end=f"2026-01-{D+1}", interval=TIMEFRAME).iloc[0:90]
-    else:
-        df = yf.download(SYMBOL, start=f"2026-01-{D}", end=f"2026-01-{D+1}", interval=TIMEFRAME)
+def get_data():
+    df = yf.download(SYMBOL, interval=TIMEFRAME)
     df.columns = df.columns.get_level_values(0)
     df.dropna(inplace=True)
+    print(df.iloc[-1])
     return df
