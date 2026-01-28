@@ -4,6 +4,16 @@ from sklearn.ensemble import GradientBoostingRegressor
 import joblib
 from config.config import SEQUENCE_LENGTH
 from typing import Tuple
+import os
+
+# Hardcoded feature columns for GBT model (must match exactly between training and prediction)
+GBT_FEATURE_COLS = [
+    'Open', 'High', 'Low', 'Close', 'Volume',
+    'LogReturn', 'RollingMeanReturn', 'RealizedVol', 'VolOfVol', 'VolumeZ', 'ReturnZ',
+    'Momentum_12', 'DistFromMA20', 'RangePosition', 'ATR', 'ATR_Z',
+    'BreakoutHigh20', 'BreakoutLow20', 'VAL', 'VAH', 'VALTap', 'VAHTap',
+    'Regieme'
+]
 
 def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -18,8 +28,8 @@ def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         - X_sequences: Array of shape (n_samples, sequence_length * n_features)
         - y_targets: Array of shape (n_samples,) with ForwardReturn values
     """
-    feature_cols = [col for col in data.columns if col not in ['ForwardReturn', 'IsGreen']]
-    feature_data = data[feature_cols].values
+    # Use hardcoded feature columns
+    feature_data = data[GBT_FEATURE_COLS].values
     targets = data['ForwardReturn'].values
     
     X_sequences = []
@@ -37,16 +47,15 @@ def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     
     return np.array(X_sequences), np.array(y_targets)
 
-def train_gbt(data: pd.DataFrame) -> Tuple[GradientBoostingRegressor, int]:
+def train_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
     """
     Train GBT model on sequences.
     
     Args:
         data: DataFrame with all features including 'ForwardReturn'
-        sequence_length: Number of previous candles to use in each sequence
     
     Returns:
-        Tuple of (trained_model, sequence_length)
+        Trained GradientBoostingRegressor model
     
     Raises:
         ValueError: If no valid training data after removing NaNs
@@ -80,6 +89,7 @@ def train_gbt(data: pd.DataFrame) -> Tuple[GradientBoostingRegressor, int]:
             verbose=1
         )
         model.fit(X_sequences, y_targets)
+        save_model(model, "./trained_models/gbt_model.pkl")
         return model
     except ValueError as e:
         if "NaN" in str(e) or "missing values" in str(e).lower():
@@ -95,7 +105,7 @@ def predict_next_candle(model, sequence: pd.DataFrame) -> Tuple[float, float, fl
     
     Args:
         model: Trained GradientBoostingRegressor model
-        sequence: DataFrame with sequence_length rows of features (excluding 'ForwardReturn', 'IsGreen')
+        sequence: DataFrame with sequence_length rows of features (must contain GBT_FEATURE_COLS)
     
     Returns:
         Tuple of (Q1, Q2/median, Q3, mean) where:
@@ -104,9 +114,12 @@ def predict_next_candle(model, sequence: pd.DataFrame) -> Tuple[float, float, fl
         - Q3: 75th percentile of the distribution
         - mean: Mean of the distribution (standard ensemble prediction)
     """
-    # Get feature columns (exclude target columns if present)
-    feature_cols = [col for col in sequence.columns if col not in ['ForwardReturn', 'IsGreen']]
-    feature_data = sequence[feature_cols].values
+    # Use hardcoded feature columns
+    missing_cols = [col for col in GBT_FEATURE_COLS if col not in sequence.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required feature columns: {missing_cols}")
+    
+    feature_data = sequence[GBT_FEATURE_COLS].values
     
     # Ensure we have the right sequence length
     if len(feature_data) != SEQUENCE_LENGTH:
@@ -152,8 +165,12 @@ def predict_with_quartiles(model, data: pd.DataFrame,
         DataFrame with 'PredictedReturn_Q1', 'PredictedReturn_Q2', 'PredictedReturn_Q3', 
         'PredictedReturn' (mean), and 'Signal' columns added
     """
-    feature_cols = [col for col in data.columns if col not in ['ForwardReturn', 'IsGreen']]
-    feature_data = data[feature_cols]
+    # Use hardcoded feature columns
+    missing_cols = [col for col in GBT_FEATURE_COLS if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required feature columns in data: {missing_cols}")
+    
+    feature_data = data[GBT_FEATURE_COLS]
     
     q1_predictions = []
     q2_predictions = []
@@ -190,3 +207,9 @@ def predict_with_quartiles(model, data: pd.DataFrame,
     )
     
     return result
+
+def save_model(model: GradientBoostingRegressor, path: str) -> None:
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    joblib.dump(model, path)
+    print(f"Model saved to {path}")

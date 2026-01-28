@@ -41,7 +41,6 @@ def load_gbt(df):
             model = train_gbt(df.iloc[:-OFFSET])
             # Ensure directory exists before saving
             os.makedirs("./trained_models", exist_ok=True)
-            joblib.dump(model, "./trained_models/gbt_model.pkl")
         except ValueError as e:
             print(f"Error training GBT model: {e}")
             print("Attempting to use existing model or creating minimal model...")
@@ -102,6 +101,13 @@ def loop():
         
         print(df[['Close','PredictedPrice', 'Signal']].tail(24))
 
+        if df['Signal'].iloc[-1] == 1:
+            with open('signal.txt', 'a') as f:
+                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' +1 @ ' + str(current_price) + '\n')
+        elif df['Signal'].iloc[-1] == -1:
+            with open('signal.txt', 'a') as f:
+                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' -1 @ ' + str(current_price) + '\n')
+
         # Retrain model if needed
         if current_time.minute % 15 == 0:
             print("Retraining model")
@@ -115,7 +121,7 @@ def loop():
                 print("Continuing with existing HMM model...")
             
             try:
-                train_gbt(df)
+                train_gbt(df.iloc[:-OFFSET])
             except ValueError as e:
                 print(f"Error retraining GBT model: {e}")
                 print("Continuing with existing GBT model...")
