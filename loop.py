@@ -54,6 +54,7 @@ def load_gbt(df):
     return model
 
 def loop():
+    last_candle = None
     while True:
         # Get & print current time
         current_time = datetime.now()
@@ -61,6 +62,12 @@ def loop():
 
         # Get data
         df = get_data()
+        if df.index[-1] == last_candle:
+            sleep_time = get_sleep_time(datetime.now())
+            print(f"Sleeping for {sleep_time} seconds")
+            time.sleep(sleep_time)
+            continue
+        last_candle = df.index[-1]
 
         # Add features to data
         print("Adding features to data...")
@@ -103,10 +110,10 @@ def loop():
 
         if df['Signal'].iloc[-1] == 1:
             with open('signal.txt', 'a') as f:
-                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' +1 @ ' + str(current_price) + '\n')
+                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' LONG @ ' + str(current_price) + '\n')
         elif df['Signal'].iloc[-1] == -1:
             with open('signal.txt', 'a') as f:
-                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' -1 @ ' + str(current_price) + '\n')
+                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' SHORT @ ' + str(current_price) + '\n')
 
         # Retrain model if needed
         if current_time.minute % 15 == 0:
