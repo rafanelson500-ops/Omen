@@ -63,6 +63,7 @@ def loop():
         # Get data
         df = get_data()
         if df.index[-1] == last_candle:
+            time.sleep(HEADSTART)
             sleep_time = get_sleep_time(datetime.now())
             print(f"Sleeping for {sleep_time} seconds")
             time.sleep(sleep_time)
@@ -93,10 +94,10 @@ def loop():
         current_predicted_price = df['PredictedPrice'].iloc[-1]
         last_price = df['Close'].iloc[-2]
         last_predicted_price = df['PredictedPrice'].iloc[-2]
-        if last_predicted_price > last_price and current_predicted_price < current_price:
-            sell()
-        elif last_predicted_price < last_price and current_predicted_price > current_price:
-            buy()
+        # if last_predicted_price > last_price and current_predicted_price < current_price:
+        #     sell()
+        # elif last_predicted_price < last_price and current_predicted_price > current_price:
+        #     buy()
         
         # Crossover logic: 
         # Buy (1): PredictedPrice crosses above Close (was below, now above)
@@ -110,10 +111,10 @@ def loop():
 
         if df['Signal'].iloc[-1] == 1:
             with open('signal.txt', 'a') as f:
-                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' LONG @ ' + str(current_price) + '\n')
+                f.write('Candle: ' + df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + ' Close,' + ' LONG @ ' + str(current_price) + '\n')
         elif df['Signal'].iloc[-1] == -1:
             with open('signal.txt', 'a') as f:
-                f.write(current_time.strftime('%Y-%m-%d %H:%M:%S') + ' SHORT @ ' + str(current_price) + '\n')
+                f.write('Candle: ' + df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + ' Close,' + ' SHORT @ ' + str(current_price) + '\n')
 
         # Retrain model if needed
         if current_time.minute % 15 == 0:

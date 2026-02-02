@@ -2,3 +2,5 @@
 .venv/
 _pycache_/
 **/__pycache__/
+gbt_model.pkl
+regieme_model.pkl
