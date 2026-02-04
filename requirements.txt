@@ -10,3 +10,4 @@ hmmlearn
 alpaca-py
 numba
 dotenv
+ib-insync

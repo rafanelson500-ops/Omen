@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import time
 import os
 from data.data import get_data
-from config.config import HEADSTART, LOOKBACK_WINDOW, SEQUENCE_LENGTH, OFFSET, TARGET
+from config.config import HEADSTART, LOOKBACK_WINDOW, SEQUENCE_LENGTH, OFFSET, TARGET, RETRAIN_INTERVAL
 from data.features import add_features
 import matplotlib.pyplot as plt
 import joblib
@@ -10,7 +10,6 @@ from hmm.model import train_hmm, predict_regimes
 from gbt.model import train_gbt, predict_with_quartiles
 import plotly.graph_objects as go
 import numpy as np
-from broker import buy, sell
 
 def get_sleep_time(current_time):
     next_time = current_time.replace(second=0, microsecond=0) + timedelta(minutes=5-current_time.minute%5)
@@ -90,34 +89,25 @@ def loop():
 
         df['PredictedPrice'] = df['Close'] * (1 + df['PredictedReturn'].fillna(0))
 
-        current_price = df['Close'].iloc[-1]
-        current_predicted_price = df['PredictedPrice'].iloc[-1]
-        last_price = df['Close'].iloc[-2]
-        last_predicted_price = df['PredictedPrice'].iloc[-2]
-        # if last_predicted_price > last_price and current_predicted_price < current_price:
-        #     sell()
-        # elif last_predicted_price < last_price and current_predicted_price > current_price:
-        #     buy()
-        
-        # Crossover logic: 
-        # Buy (1): PredictedPrice crosses above Close (was below, now above)
-        # Sell (-1): PredictedPrice crosses below Close (was above, now below)
-        # Hold (0): otherwise
         crossed_above = (df['PredictedPrice'] > df['Close']) & (df['PredictedPrice'].shift(1) <= df['Close'].shift(1))
         crossed_below = (df['PredictedPrice'] < df['Close']) & (df['PredictedPrice'].shift(1) >= df['Close'].shift(1))
         df['Signal'] = np.where(crossed_above, 1, np.where(crossed_below, -1, 0))
         
         print(df[['Close','PredictedPrice', 'Signal']].tail(24))
 
-        if df['Signal'].iloc[-1] == 1:
+        signal = 0
+        non_zero = df.loc[df['Signal'] != 0, 'Signal']
+        signal = int(non_zero.iloc[-1]) if len(non_zero) > 0 else 0
+
+        if signal == 1:
             with open('signal.txt', 'a') as f:
-                f.write('Candle: ' + df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + ' Close,' + ' LONG @ ' + str(current_price) + '\n')
-        elif df['Signal'].iloc[-1] == -1:
+                f.write('+1' + '\t' + str(current_price) + '\n')
+        elif signal == -1:
             with open('signal.txt', 'a') as f:
-                f.write('Candle: ' + df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + ' Close,' + ' SHORT @ ' + str(current_price) + '\n')
+                f.write('-1' + '\t' + str(current_price) + '\n')
 
         # Retrain model if needed
-        if current_time.minute % 15 == 0:
+        if current_time.minute % RETRAIN_INTERVAL == 0:
             print("Retraining model")
             # Ensure directory exists before retraining
             os.makedirs("./trained_models", exist_ok=True)
