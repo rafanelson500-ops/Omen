@@ -47,12 +47,13 @@ def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     
     return np.array(X_sequences), np.array(y_targets)
 
-def train_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
+def train_gbt(data: pd.DataFrame, model_dir: str = None) -> GradientBoostingRegressor:
     """
     Train GBT model on sequences.
     
     Args:
         data: DataFrame with all features including 'ForwardReturn'
+        model_dir: Directory to save model (default ./trained_models)
     
     Returns:
         Trained GradientBoostingRegressor model
@@ -60,6 +61,8 @@ def train_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
     Raises:
         ValueError: If no valid training data after removing NaNs
     """
+    base = model_dir if model_dir is not None else "./trained_models"
+    save_path = os.path.join(base, "gbt_model.pkl")
     # Create sequences from data
     X_sequences, y_targets = create_sequences(data)
     
@@ -89,7 +92,7 @@ def train_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
             verbose=1
         )
         model.fit(X_sequences, y_targets)
-        save_model(model, "./trained_models/gbt_model.pkl")
+        save_model(model, save_path)
         return model
     except ValueError as e:
         if "NaN" in str(e) or "missing values" in str(e).lower():

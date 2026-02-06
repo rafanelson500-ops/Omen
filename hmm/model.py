@@ -7,20 +7,23 @@ import os
 
 features = ['LogReturn', 'RollingMeanReturn', 'RealizedVol', 'VolOfVol', 'VolumeZ', 'ReturnZ']
 
-def train_hmm(df: pd.DataFrame, n_components: int = 2, n_iter: int = 100, random_state: int = 42) -> hmm.GaussianHMM:
+def train_hmm(df: pd.DataFrame, n_components: int = 2, n_iter: int = 100, random_state: int = 42,
+              model_dir: Optional[str] = None) -> hmm.GaussianHMM:
     """
     Train a Gaussian HMM model on normalized features.
     
     Args:
-        features: Normalized feature array of shape (n_samples, n_features)
-                  Features should be: [returns, realized_vol, autocorrelation]
+        df: DataFrame with required features
         n_components: Number of hidden states (regimes)
         n_iter: Maximum number of iterations for EM algorithm
         random_state: Random seed for reproducibility
+        model_dir: Directory to save model (default ./trained_models)
     
     Returns:
         Trained GaussianHMM model
     """
+    base = model_dir if model_dir is not None else "./trained_models"
+    save_path = os.path.join(base, "regieme_model.pkl")
     f = df[features].values
     # Create and fit the HMM model
     model = hmm.GaussianHMM(
@@ -32,7 +35,7 @@ def train_hmm(df: pd.DataFrame, n_components: int = 2, n_iter: int = 100, random
     
     # Fit the model
     model.fit(f)
-    save_model(model, "./trained_models/regieme_model.pkl")
+    save_model(model, save_path)
     
     return model
 
