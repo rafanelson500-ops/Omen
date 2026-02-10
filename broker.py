@@ -20,8 +20,8 @@ base_url = os.getenv("BASE_URL")
 account_id = os.getenv("ACCOUNT_ID")
 tradovate_socket = None
 socket_ready = False
-access_token = "eyJraWQiOiIyMSIsImFsZyI6IkVkRFNBIn0.eyJzdWIiOiI1OTk3OTMwIiwiZXhwIjoxNzcwNzQ2MTc2LCJqdGkiOiItNDUzNDI0MTc4NjA1OTM2NDc1My0tMTUwMzczNDUyMDMyMTY2NDczOSIsInBocyI6LTQyMDkzNDk0LCJhY2wiOiJ7XCJlbnRyaWVzXCI6e1wiQ2hhdFwiOlwiRnVsbEFjY2Vzc1wiLFwiKlwiOlwiRGVuaWVkXCIsXCJVc2Vyc1wiOlwiRnVsbEFjY2Vzc1wiLFwiUHJpY2VzXCI6XCJSZWFkXCIsXCJPcmRlcnNcIjpcIkZ1bGxBY2Nlc3NcIixcIkFjY291bnRpbmdcIjpcIkZ1bGxBY2Nlc3NcIixcIlBvc2l0aW9uc1wiOlwiUmVhZFwiLFwiQ29udHJhY3RMaWJyYXJ5XCI6XCJSZWFkXCIsXCJBbGVydHNcIjpcIkZ1bGxBY2Nlc3NcIixcIlJpc2tzXCI6XCJGdWxsQWNjZXNzXCJ9LFwicmVwb3J0c1wiOntcIipcIjpcIkRlbmllZFwifSxcImRlZmF1bHRcIjpcIkRlbmllZFwifSJ9.i8wkp_EsIJOZcuYkW4-m4VK6p1V3oeUDB74i_NlZfus6zxhtS6U10Xig7UtX3Xan4YkjyjlAMm09-0ycIgY8Dw"
-md_token = "eyJraWQiOiIyMSIsImFsZyI6IkVkRFNBIn0.eyJzdWIiOiI1OTk3OTMwIiwiZXhwIjoxNzcwNzQ2MTc2LCJqdGkiOiItNjIxODg0ODIwMDUyOTcxNTI3NS0zMzUyMzIwOTE5MzIzOTc4Njk0IiwicGhzIjotNDIwOTM0OTQsImFjbCI6IntcImVudHJpZXNcIjp7XCJVc2Vyc1wiOlwiUmVhZFwifSxcInJlcG9ydHNcIjp7fSxcImRlZmF1bHRcIjpcIkRlbmllZFwifSJ9.WTCAd2FsTjl0zoNHHpd0cYNPFxmpjgHGbN_bzTgu37vaWRhahGHnPq7wGcYrv9KTALYR7bGcSIjNQii_T_XbAQ"
+access_token = None
+md_token = None
 
 def refresh_tokens():
     global access_token, md_token
@@ -113,28 +113,31 @@ def sell():
         print(response.text)
 
 async def connect_to_socket():
-    #access_token, md_token = authenticate()
+    access_token, md_token = authenticate()
     global tradovate_socket, socket_ready
 
     if tradovate_socket is None:
-        tradovate_socket = await websockets.connect("wss://demo.tradovateapi.com/v1/websocket")
+        tradovate_socket = await websockets.connect("wss://md.tradovateapi.com/v1/websocket")
     async with tradovate_socket as websocket:
         print("Connected to data socket")
         print("Authorizing...")
-        message = f"authorize\n2\n\n{md_token}"
+        message = f"authorize\n2\n\n{access_token}"
         await websocket.send(message)
         while True:
             resp = await websocket.recv()
-            print(resp)
             action = resp[0]
             # Data
             if action == "a":
                 data = json.loads(resp[1:])[0]
-                if data["s"] == 200:
-                    print("Authorized")
-                    socket_ready = True
-                else:
-                    print("Authorization failed")
+                if data["i"] == 2:
+                    if data["s"] == 200:
+                        print("Authorized")
+                        socket_ready = True
+                    else:
+                        print("Authorization failed")
+                elif data["i"] == 67:
+                    print("Chart data received")
+                    print(data)
 
             # Heartbeat
             elif action == "h":
@@ -168,7 +171,8 @@ async def get_data():
         },
     }
 
-    await tradovate_socket.send("md/getChart\n" + json.dumps(request))
+    message = f"md/getChart\n67\n\n{json.dumps(request)}"
+    await tradovate_socket.send(message)
 
 def init_socket():
     asyncio.run(connect_to_socket())
