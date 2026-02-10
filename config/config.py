@@ -1,10 +1,10 @@
-SYMBOL = "ES=F"
-TRADE_SYMBOL = "SPY"
+SYMBOL = "MESH6"
+CONTRACT_ID = 4214195
+CONTRACT_LOTS = 4
 TIMEFRAME = "5m"
 SEQUENCE_LENGTH = 12 # Number of candles to use for prediction
 TARGET = 12 # Number of candles to predict forward
 HEADSTART = 0 # Number of seconds before candle close to start
-QTY = 10 # Maximum number of shares to buy or sell
 RETRAIN_INTERVAL = 5 # Every x minutes, retrain the model
 OFFSET = 24 # Number of recent candles to exclude from training
 LOOKBACK_WINDOW = 1000 # Number of candles to look back for training

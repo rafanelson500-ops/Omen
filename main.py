@@ -13,6 +13,7 @@ from hmm.model import train_hmm, predict_regimes, features as HMM_FEATURES
 from gbt.model import train_gbt, predict_with_quartiles
 import plotly.graph_objects as go
 import numpy as np
+from broker import buy, sell, refresh_tokens
 
 def get_sleep_time(current_time):
     next_time = current_time.replace(second=0, microsecond=0) + timedelta(minutes=5-current_time.minute%5)
@@ -106,9 +107,11 @@ def process_data(df):
     current_price = df['Close'].iloc[-1]
 
     if signal == 1:
+        buy()
         with open('signal.txt', 'a') as f:
             f.write(df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + '\t' + '+1' + '\t' + str(current_price) + '\n')
     elif signal == -1:
+        sell()
         with open('signal.txt', 'a') as f:
             f.write(df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + '\t' + '-1' + '\t' + str(current_price) + '\n')
 
@@ -135,6 +138,7 @@ def loop():
 
         # Retrain model if needed
         if current_time.minute % RETRAIN_INTERVAL == 0:
+            refresh_tokens()
             print("Retraining model")
             os.makedirs("./trained_models", exist_ok=True)
             # HMM needs rows with no NaN in its features
