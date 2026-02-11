@@ -159,7 +159,7 @@ async def get_data():
         return []
     
     request = {
-        "symbol":SYMBOL,
+        "symbol": 4214195,
         "chartDescription": {
             "underlyingType":"MinuteBar",
             "elementSize":5,
@@ -167,12 +167,26 @@ async def get_data():
             "withHistogram": False
         },
         "timeRange": {
-            "asMuchAsElements":1000
+            "asMuchAsElements":66
         },
     }
 
     message = f"md/getChart\n67\n\n{json.dumps(request)}"
     await tradovate_socket.send(message)
 
+def get_user_info():
+    access_token, md_token = authenticate()
+    url = f"https://{base_url}/account/list"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    response = requests.get(url, headers=headers)
+    return response.json()
+
 def init_socket():
     asyncio.run(connect_to_socket())
+
+if __name__ == "__main__":
+    print(get_user_info())
