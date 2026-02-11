@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timedelta, timezone
 import dotenv
 import requests
-import websockets
 import pandas as pd
 import time
 from config.config import CONTRACT_ID, CONTRACT_LOTS, SYMBOL, TIMEFRAME
@@ -111,82 +110,3 @@ def sell():
 
         response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
         print(response.text)
-
-async def connect_to_socket():
-    access_token, md_token = authenticate()
-    global tradovate_socket, socket_ready
-
-    if tradovate_socket is None:
-        tradovate_socket = await websockets.connect("wss://md.tradovateapi.com/v1/websocket")
-    async with tradovate_socket as websocket:
-        print("Connected to data socket")
-        print("Authorizing...")
-        message = f"authorize\n2\n\n{access_token}"
-        await websocket.send(message)
-        while True:
-            resp = await websocket.recv()
-            action = resp[0]
-            # Data
-            if action == "a":
-                data = json.loads(resp[1:])[0]
-                if data["i"] == 2:
-                    if data["s"] == 200:
-                        print("Authorized")
-                        socket_ready = True
-                    else:
-                        print("Authorization failed")
-                elif data["i"] == 67:
-                    print("Chart data received")
-                    print(data)
-
-            # Heartbeat
-            elif action == "h":
-                await websocket.send("[]")
-
-            # Market data
-            elif action == "md":
-                data = json.loads(resp[1:])[0]
-                print(data)
-
-            # Unknown action
-            else:
-                print(resp)
-
-async def get_data():
-    print("Getting data...")
-    if tradovate_socket is None or not socket_ready:
-        print("Socket not connected or not ready")
-        return []
-    
-    request = {
-        "symbol": 4214195,
-        "chartDescription": {
-            "underlyingType":"MinuteBar",
-            "elementSize":5,
-            "elementSizeUnit":"UnderlyingUnits",
-            "withHistogram": False
-        },
-        "timeRange": {
-            "asMuchAsElements":66
-        },
-    }
-
-    message = f"md/getChart\n67\n\n{json.dumps(request)}"
-    await tradovate_socket.send(message)
-
-def get_user_info():
-    access_token, md_token = authenticate()
-    url = f"https://{base_url}/account/list"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
-    response = requests.get(url, headers=headers)
-    return response.json()
-
-def init_socket():
-    asyncio.run(connect_to_socket())
-
-if __name__ == "__main__":
-    print(get_user_info())

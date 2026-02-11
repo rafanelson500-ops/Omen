@@ -13,3 +13,4 @@ dotenv
 websockets
 ib-insync
 pyautogui
+databento

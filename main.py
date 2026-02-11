@@ -105,15 +105,16 @@ def process_data(df):
     signal = int(non_zero.iloc[-1]) if len(non_zero) > 0 else 0
 
     current_price = df['Close'].iloc[-1]
+    last_ts = df.index[-1][-1] if isinstance(df.index[-1], tuple) else df.index[-1]
 
     if signal == 1:
         buy()
         with open('signal.txt', 'a') as f:
-            f.write(df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + '\t' + '+1' + '\t' + str(current_price) + '\n')
+            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '+1' + '\t' + str(current_price) + '\n')
     elif signal == -1:
         sell()
         with open('signal.txt', 'a') as f:
-            f.write(df.index[-1].strftime('%Y-%m-%d %H:%M:%S') + '\t' + '-1' + '\t' + str(current_price) + '\n')
+            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '-1' + '\t' + str(current_price) + '\n')
 
 def loop():
     last_candle = None
@@ -124,13 +125,14 @@ def loop():
 
         # Get data
         df = get_data()
-        if df.index[-1] == last_candle:
+        last_ts = df.index[-1][-1] if isinstance(df.index[-1], tuple) else df.index[-1]
+        if last_ts == last_candle:
             time.sleep(HEADSTART)
             sleep_time = get_sleep_time(datetime.now())
             print(f"Sleeping for {sleep_time} seconds")
             time.sleep(sleep_time)
             continue
-        last_candle = df.index[-1]
+        last_candle = last_ts
 
         # Add features to data
         df = add_features(df)
