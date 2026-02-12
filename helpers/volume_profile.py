@@ -125,9 +125,9 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
     df["VAH"] = np.nan
     
     # Convert to numpy arrays for faster access
-    lows = df["Low"].values.astype(np.float64)
-    highs = df["High"].values.astype(np.float64)
-    volumes = df["Volume"].values.astype(np.float64)
+    lows = df["low"].values.astype(np.float64)
+    highs = df["high"].values.astype(np.float64)
+    volumes = df["volume"].values.astype(np.float64)
     
     # Pre-allocate result arrays
     val_results = np.full(len(df), np.nan, dtype=np.float64)

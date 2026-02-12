@@ -8,7 +8,7 @@ import os
 
 # Hardcoded feature columns for GBT model (must match exactly between training and prediction)
 GBT_FEATURE_COLS = [
-    'Open', 'High', 'Low', 'Close', 'Volume',
+    'open', 'high', 'low', 'close', 'volume',
     'LogReturn', 'RollingMeanReturn', 'RealizedVol', 'VolOfVol', 'VolumeZ', 'ReturnZ',
     'Momentum_12', 'DistFromMA20', 'RangePosition', 'ATR', 'ATR_Z',
     'BreakoutHigh20', 'BreakoutLow20', 'VAL', 'VAH', 'VALTap', 'VAHTap',

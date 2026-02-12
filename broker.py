@@ -47,8 +47,6 @@ def authenticate():
     }
 
     response = requests.post(url, headers=headers, json=credentials)
-    print("Access token: ", response.json()["accessToken"])
-    print("MD access token: ", response.json()["mdAccessToken"])
     return response.json()["accessToken"], response.json()["mdAccessToken"]
 
 
