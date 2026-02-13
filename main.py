@@ -3,8 +3,7 @@ import time
 import os
 from data.data import get_data
 from config.config import (
-    HEADSTART, LOOKBACK_WINDOW, SEQUENCE_LENGTH, OFFSET, TARGET, RETRAIN_INTERVAL,
-    BACKTEST_MODEL_DIR, BACKTEST_STEP, BACKTEST_RETRAIN_EVERY_N_CANDLES,
+    HEADSTART, LOOKBACK_WINDOW, SEQUENCE_LENGTH, OFFSET, TARGET, RETRAIN_INTERVAL, WINDOW_START, WINDOW_END, WINDOW_CROSSES_DAY
 )
 
 # Number of most recent bars to always keep for signalling (avoid delayed signal from dropna)
@@ -17,7 +16,25 @@ from gbt.model import train_gbt, predict_with_quartiles
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
-from broker import buy, sell, refresh_tokens
+from broker import buy, sell, close_all, refresh_tokens
+
+def get_within_window(current_time):
+    start_split = WINDOW_START.split(":")
+    end_split = WINDOW_END.split(":")
+    start_hour = int(start_split[0])
+    start_minute = int(start_split[1])
+    end_hour = int(end_split[0])
+    end_minute = int(end_split[1])
+    
+    if current_time.hour == start_hour and current_time.minute >= start_minute:
+        return True
+    if current_time.hour == end_hour and current_time.minute < end_minute:
+        return True
+    if WINDOW_CROSSES_DAY and (current_time.hour > start_hour or current_time.hour < end_hour):
+        return True
+    if not WINDOW_CROSSES_DAY and (current_time.hour > start_hour and current_time.hour < end_hour):
+        return True
+    return False
 
 def get_sleep_time(current_time):
     next_time = current_time.replace(second=0, microsecond=0) + timedelta(minutes=5-current_time.minute%5)
@@ -115,7 +132,7 @@ def process_data(df):
     crossed_below = (df['PredictedPrice'] < df['close']) & (df['PredictedPrice'].shift(1) >= df['close'].shift(1))
     df['Signal'] = np.where(crossed_above, 1, np.where(crossed_below, -1, 0))
     
-    print(df[['close','PredictedPrice', 'Signal']].tail(24))
+    print(df[['close','PredictedPrice', 'Signal']].tail(5))
 
     signal = 0
     non_zero = df.loc[df['Signal'] != 0, 'Signal']
@@ -137,46 +154,50 @@ def loop():
     while True:
         # Get & print current time
         current_time = datetime.now()
-        print(f"Current time: {current_time}")
+        within_window = get_within_window(current_time)
+        print(f"Current time: {current_time}, within window: {within_window}")
 
-        # Get data
-        df = get_data()
+        if within_window and current_time.minute % 5 == 0:
+            # Get data
+            df = get_data()
 
-        # Add features to data
-        df = add_features(df)
-        process_data(df)
-        # Retrain model if needed
-        if current_time.minute % RETRAIN_INTERVAL == 0:
-            refresh_tokens()
-            print("Retraining model")
-            os.makedirs("./trained_models", exist_ok=True)
-            # HMM needs rows with no NaN in its features
-            train_df = df.dropna(subset=HMM_FEATURES)
-            train_df = train_df.iloc[:-OFFSET] if len(train_df) > OFFSET else train_df
-            hmm_model = None
-            if len(train_df) > 50:
-                try:
-                    hmm_model = train_hmm(train_df)
-                except Exception as e:
-                    print(f"Error retraining HMM model: {e}")
-                    print("Continuing with existing HMM model...")
+            # Add features to data
+            df = add_features(df)
+            process_data(df)
+            # Retrain model if needed
+            if current_time.minute % RETRAIN_INTERVAL == 0:
+                refresh_tokens()
+                print("Retraining model")
+                os.makedirs("./trained_models", exist_ok=True)
+                # HMM needs rows with no NaN in its features
+                train_df = df.dropna(subset=HMM_FEATURES)
+                train_df = train_df.iloc[:-OFFSET] if len(train_df) > OFFSET else train_df
+                hmm_model = None
+                if len(train_df) > 50:
                     try:
-                        hmm_model = load_hmm(df)
-                    except Exception:
-                        hmm_model = None
-            if hmm_model is not None:
-                df_regime = df.dropna(subset=HMM_FEATURES).copy()
-                df_regime["Regieme"] = predict_regimes(hmm_model, df_regime)
-                df_regime = df_regime.iloc[:-OFFSET] if len(df_regime) > OFFSET else df_regime
-                if len(df_regime) > 20:
-                    try:
-                        train_gbt(df_regime)
-                    except ValueError as e:
-                        print(f"Error retraining GBT model: {e}")
-                        print("Continuing with existing GBT model...")
+                        hmm_model = train_hmm(train_df)
                     except Exception as e:
-                        print(f"Unexpected error retraining GBT model: {e}")
-                        print("Continuing with existing GBT model...")
+                        print(f"Error retraining HMM model: {e}")
+                        print("Continuing with existing HMM model...")
+                        try:
+                            hmm_model = load_hmm(df)
+                        except Exception:
+                            hmm_model = None
+                if hmm_model is not None:
+                    df_regime = df.dropna(subset=HMM_FEATURES).copy()
+                    df_regime["Regieme"] = predict_regimes(hmm_model, df_regime)
+                    df_regime = df_regime.iloc[:-OFFSET] if len(df_regime) > OFFSET else df_regime
+                    if len(df_regime) > 20:
+                        try:
+                            train_gbt(df_regime)
+                        except ValueError as e:
+                            print(f"Error retraining GBT model: {e}")
+                            print("Continuing with existing GBT model...")
+                        except Exception as e:
+                            print(f"Unexpected error retraining GBT model: {e}")
+                            print("Continuing with existing GBT model...")
+        else:
+            close_all()
 
         # Sleep for remaining time
         sleep_time = get_sleep_time(datetime.now())

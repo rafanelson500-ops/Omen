@@ -41,5 +41,4 @@ def get_data():
         close=("close", "last"),
         volume=("volume", "sum"),
     ).dropna(how="all")
-    print(df.tail(24))
     return df.iloc[-int(LOOKBACK_WINDOW*1.5):]

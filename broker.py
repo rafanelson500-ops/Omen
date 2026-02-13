@@ -6,7 +6,7 @@ import dotenv
 import requests
 import pandas as pd
 import time
-from config.config import CONTRACT_ID, CONTRACT_LOTS, SYMBOL, TIMEFRAME
+from config.config import CONTRACT_ID, CONTRACT_LOTS, SYMBOL, TIMEFRAME, MODE
 
 dotenv.load_dotenv()
 
@@ -15,7 +15,8 @@ secret = os.getenv("SECRET")
 user = os.getenv("USERNAME")
 device_id = os.getenv("DEVICE_ID")
 password = os.getenv("PASSWORD")
-base_url = os.getenv("BASE_URL")
+base_url = os.getenv("BASE_URL") if MODE == "live" else os.getenv("PAPER_BASE_URL")
+spec = os.getenv("LIVE_SPEC") if MODE == "live" else os.getenv("PAPER_SPEC")
 account_id = os.getenv("ACCOUNT_ID")
 tradovate_socket = None
 socket_ready = False
@@ -50,61 +51,119 @@ def authenticate():
     return response.json()["accessToken"], response.json()["mdAccessToken"]
 
 
-def get_positions():
-    url = f"https://{base_url}/position/list"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-    }
-    response = requests.get(url, headers=headers)
-    positions = response.json()
-    for p in positions:
-        if p['contractId'] == CONTRACT_ID:
-            return p['netPos']
-
+def get_positions(default):
+    retries = 3
+    while retries > 0:
+        try:
+            url = f"https://{base_url}/position/list"
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+            }
+            response = requests.get(url, headers=headers)
+            positions = response.json()
+            for p in positions:
+                if p['contractId'] == CONTRACT_ID:
+                    return p['netPos']
+        except Exception as e:
+            print(f"Error getting positions: {e}")
+            retries -= 1
+            time.sleep(1)
+    return default
 
 def buy():
-    if access_token is None or md_token is None:
-        refresh_tokens()
-    current = get_positions()
-    cons_to_buy = CONTRACT_LOTS - current
-    if cons_to_buy > 0:
-        print(f"Buying {cons_to_buy} contracts")
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {access_token}",
-        }
-        body = {
-            "accountSpec": "DEMO5997930",
-            "action": "Buy",
-            "symbol": SYMBOL,
-            "orderQty": cons_to_buy,
-            "orderType": "Market",
-            "isAutomated": True,
-        }
+    try:
+        if access_token is None or md_token is None:
+            refresh_tokens()
+        current = get_positions(CONTRACT_LOTS)
+        cons_to_buy = CONTRACT_LOTS - current
+        if cons_to_buy > 0:
+            print(f"Buying {cons_to_buy} contracts")
+            headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            }
+            body = {
+                "accountSpec": spec,
+                "action": "Buy",
+                "symbol": SYMBOL,
+                "orderQty": cons_to_buy,
+                "orderType": "Market",
+                "isAutomated": True,
+            }
 
-        response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
-        print(response.text)
+            response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
+            print(response.text)
+    except Exception as e:
+        print(f"Error buying: {e}")
 
 
 def sell():
-    if access_token is None or md_token is None:
-        refresh_tokens()
-    current = get_positions()
-    cons_to_sell = current + CONTRACT_LOTS
-    if cons_to_sell > 0:
-        print(f"Selling {cons_to_sell} contracts")
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {access_token}",
-        }
-        body = {
-            "accountSpec": "DEMO5997930",
-            "action": "Sell",
-            "symbol": SYMBOL,
-            "orderQty": cons_to_sell,
-            "orderType": "Market",
-            "isAutomated": True,
-        }
+    try:
+        if access_token is None or md_token is None:
+            refresh_tokens()
+        current = get_positions(-CONTRACT_LOTS)
+        cons_to_sell = current + CONTRACT_LOTS
+        if cons_to_sell > 0:
+            print(f"Selling {cons_to_sell} contracts")
+            headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            }
+            body = {
+                "accountSpec": spec,
+                "action": "Sell",
+                "symbol": SYMBOL,
+                "orderQty": cons_to_sell,
+                "orderType": "Market",
+                "isAutomated": True,
+            }
 
-        response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
-        print(response.text)
+            response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
+            print(response.text)
+    except Exception as e:
+        print(f"Error selling: {e}")
+
+def close_all():
+    try:
+        if access_token is None or md_token is None:
+            refresh_tokens()
+        current = get_positions(0)
+        cons_to_buy = -current
+        if cons_to_buy > 0:
+            print(f"Liquidation: Buying {cons_to_sell} contracts")
+            headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            }
+            body = {
+                "accountSpec": spec,
+                "action": "Buy",
+                "symbol": SYMBOL,
+                "orderQty": cons_to_sell,
+                "orderType": "Market",
+                "isAutomated": True,
+            }
+
+            response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
+            print(response.text)
+
+        elif cons_to_buy < 0:
+            print(f"Liquidation: Selling {-cons_to_buy} contracts")
+            headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            }
+            body = {
+                "accountSpec": spec,
+                "action": "Sell",
+                "symbol": SYMBOL,
+                "orderQty": -cons_to_buy,
+                "orderType": "Market",
+                "isAutomated": True,
+            }
+
+            response = requests.post(f"https://{base_url}/order/placeorder", headers=headers, json=body)
+            print(response.text)
+
+    except Exception as e:
+        print(f"Error closing all: {e}")
