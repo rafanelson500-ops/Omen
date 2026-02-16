@@ -22,6 +22,7 @@ tradovate_socket = None
 socket_ready = False
 access_token = None
 md_token = None
+stopped = False
 
 def refresh_tokens():
     global access_token, md_token
@@ -50,6 +51,21 @@ def authenticate():
     response = requests.post(url, headers=headers, json=credentials)
     return response.json()["accessToken"], response.json()["mdAccessToken"]
 
+def update_account_stopped():
+    global stopped
+    try:
+        url = f"https://{base_url}/accountRiskStatus/list"
+
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        response = requests.get(url, headers=headers)
+        stopped = "userTriggeredLiqOnly" in response.json()[0] and response.json()[0]["userTriggeredLiqOnly"]
+    except Exception as e:
+        print(f"Error getting account stopped: {e}")
+        stopped = True
 
 def get_positions(default):
     retries = 3
@@ -63,16 +79,25 @@ def get_positions(default):
             }
             response = requests.get(url, headers=headers)
             positions = response.json()
+            if len(positions) == 0:
+                print("No open positions")
+                return 0
             for p in positions:
                 if p['contractId'] == CONTRACT_ID:
+                    print(f"Found position: {p['netPos']}")
                     return p['netPos']
+            print(f"No position found, returning default: {default}")
             return default
         except Exception as e:
-            print(f"Error getting positions: {e}")
+            print(f"Error getting positions: {e}, retries left: {retries}")
             time.sleep(1)
+    print(f"No position found, returning default: {default}")
     return default
 
 def buy():
+    if stopped:
+        print("Account is stopped, not buying")
+        return
     try:
         if access_token is None or md_token is None:
             refresh_tokens()
@@ -100,6 +125,9 @@ def buy():
 
 
 def sell():
+    if stopped:
+        print("Account is stopped, not selling")
+        return
     try:
         if access_token is None or md_token is None:
             refresh_tokens()
@@ -126,13 +154,16 @@ def sell():
         print(f"Error selling: {e}")
 
 def close_all():
+    if stopped:
+        print("Account is stopped, not closing all")
+        return
     try:
         if access_token is None or md_token is None:
             refresh_tokens()
         current = get_positions(0)
         cons_to_buy = -current
         if cons_to_buy > 0:
-            print(f"Liquidation: Buying {cons_to_sell} contracts")
+            print(f"Liquidation: Buying {cons_to_buy} contracts")
             headers = {
                 "Accept": "application/json",
                 "Authorization": f"Bearer {access_token}",
@@ -141,7 +172,7 @@ def close_all():
                 "accountSpec": spec,
                 "action": "Buy",
                 "symbol": SYMBOL,
-                "orderQty": cons_to_sell,
+                "orderQty": cons_to_buy,
                 "orderType": "Market",
                 "isAutomated": True,
             }

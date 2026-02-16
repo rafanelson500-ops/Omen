@@ -16,7 +16,7 @@ from gbt.model import train_gbt, predict_with_quartiles
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
-from broker import buy, sell, close_all, refresh_tokens
+from broker import buy, sell, close_all, refresh_tokens, update_account_stopped
 
 def get_within_window(current_time):
     start_split = WINDOW_START.split(":")
@@ -140,15 +140,16 @@ def process_data(df):
 
     current_price = df['close'].iloc[-1]
     last_ts = df.index[-1][-1] if isinstance(df.index[-1], tuple) else df.index[-1]
+    print(f"Signal: {signal}")
 
     if signal == 1:
         buy()
         with open('signal.txt', 'a') as f:
-            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '+1' + '\t' + str(current_price) + '\n')
+            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '+1' + '\t' + str(current_price) + '\t' + str(df.iloc[-1]['PredictedPrice']) + '\n')
     elif signal == -1:
         sell()
         with open('signal.txt', 'a') as f:
-            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '-1' + '\t' + str(current_price) + '\n')
+            f.write(last_ts.strftime('%Y-%m-%d %H:%M:%S') + '\t' + '-1' + '\t' + str(current_price) + '\t' + str(df.iloc[-1]['PredictedPrice']) + '\n')
 
 def loop():
     while True:
@@ -199,6 +200,7 @@ def loop():
         else:
             close_all()
 
+        update_account_stopped()
         # Sleep for remaining time
         sleep_time = get_sleep_time(datetime.now())
         print(f"Sleeping for {sleep_time} seconds")
