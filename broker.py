@@ -12,9 +12,9 @@ dotenv.load_dotenv()
 
 cid = os.getenv("CID")
 secret = os.getenv("SECRET")
-user = os.getenv("USERNAME")
+user = os.getenv("USERNAME_PROP") if MODE == "prop" else os.getenv("USERNAME")
 device_id = os.getenv("DEVICE_ID")
-password = os.getenv("PASSWORD")
+password = os.getenv("PASSWORD_PROP") if MODE == "prop" else os.getenv("PASSWORD")
 base_url = os.getenv("BASE_URL") if MODE == "live" else os.getenv("PAPER_BASE_URL")
 spec = os.getenv("LIVE_SPEC") if MODE == "live" else os.getenv("PAPER_SPEC")
 account_id = os.getenv("ACCOUNT_ID")
@@ -54,6 +54,8 @@ def authenticate():
 def get_positions(default):
     retries = 3
     while retries > 0:
+        print(f"Getting positions, retries left: {retries}")
+        retries -= 1
         try:
             url = f"https://{base_url}/position/list"
             headers = {
@@ -64,9 +66,9 @@ def get_positions(default):
             for p in positions:
                 if p['contractId'] == CONTRACT_ID:
                     return p['netPos']
+            return default
         except Exception as e:
             print(f"Error getting positions: {e}")
-            retries -= 1
             time.sleep(1)
     return default
 
