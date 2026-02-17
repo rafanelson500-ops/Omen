@@ -1,0 +1,15 @@
+from helpers.config_handler import load_setting, set_setting
+
+def set_bot_enabled(enabled: bool):
+    print("Setting bot enabled to: ", enabled)
+    set_setting("enabled", enabled)
+    return {"success": True}
+
+def get_bot_enabled():
+    return load_setting("enabled")
+
+def set_lots_size(lots_size):
+    print("Setting lots size to: ", lots_size)
+    set_setting("lots_size", lots_size)
+    return {"success": True}
+    
