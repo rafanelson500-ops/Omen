@@ -12,4 +12,8 @@ def set_lots_size(lots_size):
     print("Setting lots size to: ", lots_size)
     set_setting("lots_size", lots_size)
     return {"success": True}
-    
+
+def set_session(session):
+    print("Setting session to: ", session)
+    set_setting("session", session)
+    return {"success": True}

@@ -1,3 +1,6 @@
 enabled: true
-lots_size: 3
-session: RTH
+lots_size: 4
+session: ETH
+target: 6
+hmm_retrain_time: "00:00"
+gbt_retrain_interval: 15

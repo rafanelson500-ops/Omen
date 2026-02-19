@@ -3,3 +3,8 @@ flask-cors
 flask-socketio
 eventlet
 pyyaml
+databento
+dotenv
+redis
+hmmlearn
+numba
