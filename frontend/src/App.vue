@@ -59,6 +59,7 @@ const getEnrichedData = async () => {
   addChopSignalSeries(enrichedData) 
   addRegimeSeries(enrichedData)
   addValueAreaSeries(enrichedData)
+  console.log(enrichedData[enrichedData.length - 1])
 }
 
 const updateSession = async () => {
@@ -71,6 +72,7 @@ const loadLogs = async () => {
     const logsText = await request({ action: "get_logs" }, 6) as string
     if (logsText) {
       const lines = logsText.trim().split('\n').filter(line => line.trim())
+      lines.reverse()
       logs.value = lines.map(line => {
         const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)$/)
         if (match && match[1] && match[2]) {
@@ -78,12 +80,6 @@ const loadLogs = async () => {
         }
         return { timestamp: '', message: line }
       })
-      // Auto-scroll to bottom after logs are loaded
-      setTimeout(() => {
-        if (logsContainer.value) {
-          logsContainer.value.scrollTop = logsContainer.value.scrollHeight
-        }
-      }, 100)
     }
   } catch (error) {
     console.error('Failed to load logs:', error)
@@ -138,7 +134,6 @@ onBeforeUnmount(() => {
           {{ botEnabled ? "ON" : "OFF" }}
         </span>
       </div>
-      <button type="button" class="get-enriched-data" @click="getEnrichedData">Get Enriched Data</button>
     </header>
 
     <main class="main">

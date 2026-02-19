@@ -31,7 +31,9 @@ from helpers.logs import log
 enriched_data = pd.DataFrame()
 
 def get_enriched_data():
-    return enriched_data.dropna().iloc[-1500:].to_json(orient="records")
+    safe_cols = ["forward_return", "target"]
+    subset = [c for c in enriched_data.columns if c not in safe_cols]
+    return enriched_data.dropna(subset=subset).iloc[-1500:].to_json(orient="records")
 
 def main(current_time):
     global enriched_data
@@ -56,7 +58,7 @@ def main(current_time):
     if difference > 3300:
         log(f"No new data (difference: {difference}). Last candle time: {datetime.fromtimestamp(data.iloc[-1]["time"]).strftime("%Y-%m-%d %H:%M:%S")}")
         return
-    
+
     # Featurize data
     data = add_regime_features(data)
     data = add_technical_features(data)
@@ -82,14 +84,16 @@ def main(current_time):
 
     # Store featurized & targetted data for frontend visualization
     enriched_data = data.copy()
+    print(enriched_data.iloc[-1])
 
     # If time is hmm retrain time, retrain HMM
-    if current_time.strftime("%H:%M") == config["hmm_retrain_time"]:
+    string_time = current_time.strftime("%H:%M")
+    if string_time == config["hmm_retrain_time"]:
         log("Retraining HMM...")
         train_hmm(data)
 
     # If time is multiple of retrain interval, retrain GBTs
-    if round(current_time.timestamp()) % (config["gbt_retrain_interval"] * 60) == 0:
+    if string_time == config["gbt_retrain_time"]:
         log("Retraining GBTs...")
 
 def loop():
