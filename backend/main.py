@@ -46,6 +46,8 @@ def handle_message(data):
                 response = actions[data['action']]()
             if 'id' in data:
                 emit('message', {'data': response, 'id': data['id']})
+            if 'update_all' in data and data['update_all']:
+                socketio.emit('message', {'data': 'update_all', 'id': -1})
         else:
             print("Unknown action: ", data['action'])
     else:

@@ -15,7 +15,7 @@ const logsContainer = ref<HTMLElement | null>(null)
 const logs = ref<Array<{ timestamp: string; message: string }>>([])
 const loadingLogs = ref(false)
 
-const { connect, connected, sendMessage, request } = useBackend()
+const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback } = useBackend()
 const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, clearChart } = useChart()
 
 const currentTime = ref("")
@@ -45,11 +45,11 @@ const sessionOptions = [
 
 const toggleBot = () => {
   botEnabled.value = !botEnabled.value
-  sendMessage({ action: "set_bot_enabled", data: botEnabled.value })
+  sendMessage({ action: "set_bot_enabled", data: botEnabled.value, update_all: true})
 }
 
 const updateLotsSize = () => {
-  sendMessage({ action: "set_lots_size", data: lotsSize.value})
+  sendMessage({ action: "set_lots_size", data: lotsSize.value, update_all: true})
 }
 
 const getEnrichedData = async () => {
@@ -63,41 +63,31 @@ const getEnrichedData = async () => {
 }
 
 const updateSession = async () => {
-  sendMessage({ action: "set_session", data: session.value })
+  sendMessage({ action: "set_session", data: session.value, update_all: true})
 }
 
-const loadLogs = async () => {
+const updateDashboard = async () => {
+  loadingLogs.value = true
   try {
-    loadingLogs.value = true
-    const logsText = await request({ action: "get_logs" }, 6) as string
-    if (logsText) {
-      const lines = logsText.trim().split('\n').filter(line => line.trim())
-      lines.reverse()
-      logs.value = lines.map(line => {
-        const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)$/)
-        if (match && match[1] && match[2]) {
-          return { timestamp: match[1], message: match[2] }
-        }
-        return { timestamp: '', message: line }
-      })
-    }
-  } catch (error) {
-    console.error('Failed to load logs:', error)
+    const { botData, logs: loadedLogs } = await updateDashboardFromBackend()
+    botEnabled.value = botData.enabled
+    session.value = botData.session
+    lotsSize.value = botData.lots_size
+    logs.value = loadedLogs
   } finally {
     loadingLogs.value = false
   }
 }
 
+// Set up the update_all callback after updateDashboard is defined
+setUpdateAllCallback(updateDashboard)
+
 onMounted(async() => {
   connect()
   chartContainer.value = document.querySelector(".chart") as HTMLElement
   initChart(chartContainer.value)
-  const botData = await request({ action: "get_all" }, 1) as any
-  botEnabled.value = botData.enabled as boolean
-  session.value = botData.session
-  lotsSize.value = botData.lots_size
+  updateDashboard()
   getEnrichedData()
-  loadLogs()
 
   updateTime()
   timeInterval = setInterval(updateTime, 100)
