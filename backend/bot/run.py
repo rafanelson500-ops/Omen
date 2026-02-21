@@ -25,6 +25,7 @@ from helpers.data_handler import get_data
 from helpers.features import add_regime_features, add_technical_features, add_prediction_features_chop, add_prediction_features_trend, add_targets
 from helpers.hmm import load_model as load_hmm, predict_regimes, train_hmm
 from helpers.gbt.chop_gbt import load_model as load_chop_model, predict_chop_target
+from helpers.gbt.trend_gbt import load_model as load_trend_model, predict_trend_target
 import pandas as pd
 from helpers.logs import log
 
@@ -63,6 +64,7 @@ def main(current_time):
     data = add_regime_features(data)
     data = add_technical_features(data)
     data = add_prediction_features_chop(data)
+    data = add_prediction_features_trend(data)
     data = add_targets(data)
     
     # Drop all rows with NaN except in 'forward_return' and 'target'
@@ -78,6 +80,10 @@ def main(current_time):
     chop_model = load_chop_model("trained_models/chop_gbt_model.pkl", data.iloc[:-24])
     data = predict_chop_target(chop_model, data)
 
+    trend_model = load_trend_model("trained_models/trend_gbt_model.pkl", data.iloc[:-24])
+    data = predict_trend_target(trend_model, data)
+
+    print(data.iloc[-1])
     # Weight & average predictions according to regime probabilities
 
     # Execution Logic

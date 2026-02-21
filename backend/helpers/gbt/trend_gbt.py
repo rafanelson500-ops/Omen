@@ -12,18 +12,19 @@ features = [
     'low',
     'close',
     'volume',
-    'dist_to_val',
-    'dist_to_vah',
-    'dist_to_vwap',
-    'upper_wick',
-    'lower_wick',
-    'wick_ratio',
-    'dir',
-    'persistence_5',
-    'stretch_3',
+    'mom_12_atr',
+    'mom_4_atr',
+    'mom_1_atr',
+    'pullback_up',
+    'pullback_down',
+    'ema_21',
+    'ema_slope',
+    'atr_expansion',
+    'trend_persistence_10',
+    'ema_alignment',
 ]
 
-def train_chop_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
+def train_trend_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
     """
     Train GBT model on sequences.
     
@@ -36,7 +37,7 @@ def train_chop_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
     Raises:
         ValueError: If no valid training data after removing NaNs
     """
-    save_path = "trained_models/chop_gbt_model.pkl"
+    save_path = "trained_models/trend_gbt_model.pkl"
     # Create sequences from data
     X_sequences, y_targets = create_sequences(data)
     
@@ -75,7 +76,7 @@ def train_chop_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
                            f"Features with NaN: {np.isnan(X_sequences).sum(axis=0)}") from e
         raise
 
-def predict_chop_target(model, data: pd.DataFrame) -> pd.DataFrame:
+def predict_trend_target(model, data: pd.DataFrame) -> pd.DataFrame:
     """
     Predict target values using the trained model and add chop_signal to the data.
     
@@ -123,7 +124,7 @@ def predict_chop_target(model, data: pd.DataFrame) -> pd.DataFrame:
         valid_indices.append(i)
     
     # Initialize chop_signal column with NaN
-    data['chop_signal'] = np.nan
+    data['trend_signal'] = np.nan
     
     if len(X_sequences) == 0:
         return data
@@ -152,10 +153,10 @@ def predict_chop_target(model, data: pd.DataFrame) -> pd.DataFrame:
     
     # Calculate chop_signal: binary_prediction * confidence
     # This gives values in range [-1, 1] where magnitude represents confidence
-    chop_signal = binary_prediction * confidence
+    trend_signal = binary_prediction * confidence
     
     # Fill in predictions for valid indices
-    data.loc[data.index[valid_indices], 'chop_signal'] = chop_signal
+    data.loc[data.index[valid_indices], 'trend_signal'] = trend_signal
     
     return data
 
@@ -169,5 +170,5 @@ def save_model(model: GradientBoostingRegressor, path: str) -> None:
 def load_model(path: str, df: pd.DataFrame) -> GradientBoostingRegressor:
     path = _resolve_path(path)
     if not path.exists():
-        return train_chop_gbt(df)
+        return train_trend_gbt(df)
     return joblib.load(path)

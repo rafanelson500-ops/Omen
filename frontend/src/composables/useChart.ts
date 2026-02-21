@@ -56,8 +56,13 @@ export const useChart = () => {
   }
 
   const regimeSeriesOptions = {
-    color: chartTheme.accent,
-    lineWidth: 2 as const,
+    baseValue: { type: 'price' as const, price: 0.5 },
+    topLineColor: 'rgb(255, 166, 1)',
+    topFillColor1: 'rgba( 255, 166, 1, 0.28)',
+    topFillColor2: 'rgba( 255, 166, 1, 0.05)',
+    bottomLineColor: 'rgb(0, 140, 255)',
+    bottomFillColor1: 'rgba( 0, 140, 255, 0.05)',
+    bottomFillColor2: 'rgba( 0, 140, 255, 0.28)',
   }
 
   const valueAreaSeriesOptions = {
@@ -67,12 +72,22 @@ export const useChart = () => {
 
   const chopSignalSeriesOptions = {
     baseValue: { type: 'price' as const, price: 0 },
-    topLineColor: 'rgba( 38, 166, 154, 1)',
-    topFillColor1: 'rgba( 38, 166, 154, 0.28)',
-    topFillColor2: 'rgba( 38, 166, 154, 0.05)',
-    bottomLineColor: 'rgba( 239, 83, 80, 1)',
-    bottomFillColor1: 'rgba( 239, 83, 80, 0.05)',
-    bottomFillColor2: 'rgba( 239, 83, 80, 0.28)',
+    topLineColor: 'rgb(255, 166, 1)',
+    topFillColor1: 'rgba( 255, 166, 1, 0.28)',
+    topFillColor2: 'rgba( 255, 166, 1, 0.05)',
+    bottomLineColor: 'rgb(94, 61, 0)',
+    bottomFillColor1: 'rgba( 136, 88, 0, 0.05)',
+    bottomFillColor2: 'rgba( 136, 88, 0, 0.28)',
+  }
+
+  const trendSignalSeriesOptions = {
+    baseValue: { type: 'price' as const, price: 0 },
+    topLineColor: 'rgb(0, 140, 255)',
+    topFillColor1: 'rgba( 0, 140, 255, 0.28)',
+    topFillColor2: 'rgba( 0, 140, 255, 0.05)',
+    bottomLineColor: 'rgb(0, 49, 88)',
+    bottomFillColor1: 'rgba( 0, 49, 88, 0.05)',
+    bottomFillColor2: 'rgba( 0, 49, 88, 0.28)',
   }
 
   const initChart = (container: HTMLElement) => {
@@ -122,9 +137,20 @@ export const useChart = () => {
     series.value.push(chopSignalSeries)
   }
 
+  const addTrendSignalSeries = (data: any[]) => {
+    if (!chart.value) return;
+    const trendSignalSeries = chart.value.addSeries(BaselineSeries, trendSignalSeriesOptions, 1)
+    const trendSignalData = data.map((row: any) => ({
+      time: row.time,
+      value: row.trend_signal,
+    }))
+    trendSignalSeries.setData(trendSignalData)
+    series.value.push(trendSignalSeries)
+  }
+
   const addRegimeSeries = (data: any[]) => {
     if (!chart.value) return;
-    const regimeSeries = chart.value.addSeries(LineSeries, regimeSeriesOptions, 2)
+    const regimeSeries = chart.value.addSeries(BaselineSeries, regimeSeriesOptions, 2)
     const regimeData = data.map((row: any) => ({
       time: row.time,
       value: row.regime,
@@ -140,5 +166,5 @@ export const useChart = () => {
     series.value = []
   }
 
-  return { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, clearChart }
+  return { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, clearChart }
 }

@@ -55,6 +55,7 @@ def add_technical_features(df):
 
     # --- ATR (Wilder smoothing) ---
     df['atr'] = tr.ewm(alpha=1/14, adjust=False).mean()
+    df['atr'] = np.where(df['atr'] > 0, df['atr'], 1e-6)
 
     # --- Session ID from NewSession flag ---
     # Assumes NewSession == 1 on first bar of each session
@@ -71,6 +72,7 @@ def add_technical_features(df):
 
     # --- Session VWAP ---
     df['vwap'] = df['cum_tp_vol'] / df['cum_vol']
+    df['dir'] = np.sign(df['close'] - df['open'])
 
     return df
 
@@ -80,12 +82,26 @@ def add_prediction_features_chop(df):
     df['dist_to_vwap'] = (df['close'] - df['vwap']) / df['atr']
     df['upper_wick'] = df['high'] - df[['open','close']].max(axis=1)
     df['lower_wick'] = df[['open','close']].min(axis=1) - df['low']
-    df['wick_ratio'] = (df['upper_wick'] - df['lower_wick']) / df['atr']
-    df['dir'] = np.sign(df['close'] - df['open'])
-    df['persistence_5'] = df['dir'].rolling(5).sum()
+    df['wick_ratio'] = (df['upper_wick'] - df['lower_wick']) / (df['high'] - df['low'] + 1e-6)
+    df['persistence_5'] = df['dir'].rolling(5).sum() / 5
+    df['stretch_3'] = (df['close'] - df['close'].shift(3)) / df['atr']
     return df
 
 def add_prediction_features_trend(df):
+    df['mom_12_atr'] = (df['close'] - df['close'].shift(12)) / df['atr']
+    df['mom_4_atr'] = (df['close'] - df['close'].shift(4)) / df['atr']
+    df['mom_1_atr'] = (df['close'] - df['close'].shift(1)) / df['atr']
+    rolling_high = df['high'].rolling(16).max().shift(1)
+    rolling_low = df['low'].rolling(16).min().shift(1)
+
+    df['pullback_up'] = (rolling_high - df['close']) / df['atr']
+    df['pullback_down'] = (df['close'] - rolling_low) / df['atr']
+    df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
+    df['ema_slope'] = (df['ema_21'] - df['ema_21'].shift(5)) / df['atr']
+    df['atr_expansion'] = df['atr'] / df['atr'].rolling(20).mean()
+    df['trend_persistence_10'] = df['dir'].rolling(10).sum() / 10
+    df['ema_alignment'] = (df['close'] - df['ema_21']) / df['atr']
+
     return df
 
 def add_targets(df):
