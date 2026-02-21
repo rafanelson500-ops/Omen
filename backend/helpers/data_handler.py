@@ -2,8 +2,9 @@ import dotenv
 import os
 import redis
 import json
+import time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from helpers.timing import crop_data
 
 dotenv.load_dotenv()
@@ -23,15 +24,25 @@ def _parse_ts(ts_str):
     except Exception:
         return 0
 
-def get_data(data = "ALL", jsonify = True, include_volume = False):
+def get_data(data = "ALL", jsonify = True, include_volume = False, all_data = False):
+    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     session = data
     print(f"Getting {session} data...")
-    raw = redis_client.get(OHLCV_LIST_KEY)
-    candles = json.loads(raw) if raw else []
-    candles = sorted(candles, key=lambda c: _parse_ts(c.get("timestamp")))
-    df = pd.DataFrame(candles)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], format="mixed")
-    df = df.set_index("timestamp")
+    attemps = 10
+    df = None
+    while attemps > 0:
+        raw = redis_client.get(OHLCV_LIST_KEY)
+        candles = json.loads(raw) if raw else []
+        candles = sorted(candles, key=lambda c: _parse_ts(c.get("timestamp")))
+        df = pd.DataFrame(candles)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format="mixed")
+        df = df.set_index("timestamp")
+
+        if df.index[-1].strftime("%Y-%m-%d %H:%M") == current_time:
+            break
+        attemps -= 1
+        time.sleep(0.1)
+
     #Resample to 5m (bins start when minute % 5 == 0: 10:00, 10:05, 10:10, ...)
     df = df.resample("5min").agg(
         open=("open", "first"),
@@ -45,7 +56,13 @@ def get_data(data = "ALL", jsonify = True, include_volume = False):
     df = df[~df.index.duplicated(keep="first")]
     df["time"] = (df.index.astype("int64") // 10**6).astype("int64")  # nanoseconds -> milliseconds
     cols = ["time", "open", "high", "low", "close"] if not include_volume else ["time", "open", "high", "low", "close", "volume"]
-    if jsonify:
-        return df[cols].dropna().iloc[-1500:].to_json(orient="records")
+    if all_data:
+        if jsonify:
+            return df[cols].dropna().to_json(orient="records")
+        else:
+            return df[cols].dropna()
     else:
-        return df[cols].dropna().iloc[-1500:]
+        if jsonify:
+            return df[cols].dropna().iloc[-1500:].to_json(orient="records")
+        else:
+            return df[cols].dropna().iloc[-1500:]

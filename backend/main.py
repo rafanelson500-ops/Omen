@@ -2,9 +2,11 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from helpers.config_handler import load_setting, set_setting, load_config
-from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size, set_session
+from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size, set_session, set_confidence_threshold, set_paper
+from helpers.broker import get_positions
 from helpers.logs import get_logs
 from helpers.data_handler import get_data
+from helpers.backtest import backtest, train_models
 from bot.run import get_enriched_data, loop
 import threading
 import os
@@ -14,14 +16,24 @@ app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*")
 CORS(app, origins="*")
 
+def backtest_json():
+    """Wrapper to return backtest results as JSON"""
+    data = backtest()
+    return data.to_json(orient="records")
+
 actions = {
     "set_bot_enabled": set_bot_enabled,
     "get_bot_enabled": get_bot_enabled,
     "set_session": set_session,
     "get_all": load_config,
     "set_lots_size": set_lots_size,
+    "set_confidence_threshold": set_confidence_threshold,
+    "set_paper": set_paper,
+    "get_current_position": lambda: {"current_position": get_positions()},
     "get_data": get_data,
     "get_enriched_data": get_enriched_data,
+    "backtest": backtest_json,
+    "train_models": train_models,
     "get_logs": get_logs,
 }
 

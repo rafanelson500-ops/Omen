@@ -6,20 +6,24 @@ import Header from "./components/Header.vue"
 import ChartSection from "./components/ChartSection.vue"
 import Controls from "./components/Controls.vue"
 import LogsSection from "./components/LogsSection.vue"
+import BacktestSection from "./components/BacktestSection.vue"
 
 // --- State
 const botEnabled = ref(false)
 const session = ref<"ETH" | "RTH" | "ALL">("RTH")
-const windowStart = ref("09:30")
-const windowEnd = ref("16:00")
 const lotsSize = ref(1)
+const confidenceThreshold = ref(0)
+const paper = ref(true)
+const currentPosition = ref(0)
 const chartSectionRef = ref<InstanceType<typeof ChartSection> | null>(null)
+const backtestSectionRef = ref<InstanceType<typeof BacktestSection> | null>(null)
 const loadingChartData = ref(false)
 const logs = ref<Array<{ timestamp: string; message: string }>>([])
 const loadingLogs = ref(false)
+const loadingBacktest = ref(false)
 
-const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback } = useBackend()
-const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, clearChart } = useChart()
+const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback, getBacktestData } = useBackend()
+const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, addWeightedSignalSeries, clearChart, initBacktestChart, addBacktestPriceSeries, addBacktestCumulativeSeries, addBacktestPositionSeries, clearBacktestChart } = useChart()
 
 const currentTime = ref("")
 let timeInterval: ReturnType<typeof setInterval> | null = null
@@ -30,13 +34,16 @@ const updateTime = async () => {
   const minutes = String(now.getMinutes()).padStart(2, "0")
   const seconds = String(now.getSeconds()).padStart(2, "0")
   currentTime.value = `${hours}:${minutes}:${seconds}`
-  if (seconds === "01" && !loadingChartData.value) {
-    loadingChartData.value = true
-    console.log("Reloading chart data...")
-    getEnrichedData()
-  }
-  if (seconds === "02" && loadingChartData.value) {
-    loadingChartData.value = false
+  if (parseInt(minutes) % 5 === 0) {
+    if (seconds === "05" && !loadingChartData.value) {
+      loadingChartData.value = true
+      console.log("Reloading chart data...")
+      getEnrichedData()
+      updateDashboard()
+    }
+    if (seconds === "06" && loadingChartData.value) {
+      loadingChartData.value = false
+    }
   }
 }
 
@@ -49,14 +56,23 @@ const updateLotsSize = () => {
   sendMessage({ action: "set_lots_size", data: lotsSize.value, update_all: true})
 }
 
+const updateConfidenceThreshold = () => {
+  sendMessage({ action: "set_confidence_threshold", data: confidenceThreshold.value, update_all: true})
+}
+
+const updatePaper = () => {
+  sendMessage({ action: "set_paper", data: paper.value, update_all: true})
+}
+
 const getEnrichedData = async () => {
   const enrichedData = JSON.parse(await request({ action: "get_enriched_data" }, 5) as any)
   clearChart()
   addPriceSeries(enrichedData)
+  addValueAreaSeries(enrichedData)
   addChopSignalSeries(enrichedData) 
   addTrendSignalSeries(enrichedData)
   addRegimeSeries(enrichedData)
-  addValueAreaSeries(enrichedData)
+  addWeightedSignalSeries(enrichedData)
   console.log(enrichedData[enrichedData.length - 1])
 }
 
@@ -71,6 +87,9 @@ const updateDashboard = async () => {
     botEnabled.value = botData.enabled
     session.value = botData.session
     lotsSize.value = botData.lots_size
+    confidenceThreshold.value = botData.confidence_threshold
+    paper.value = botData.paper
+    currentPosition.value = botData.current_position
     logs.value = loadedLogs
   } finally {
     loadingLogs.value = false
@@ -86,6 +105,21 @@ const handleRefreshLogs = async () => {
   }
 }
 
+const loadBacktestData = async () => {
+  loadingBacktest.value = true
+  try {
+    const backtestData = await getBacktestData()
+    clearBacktestChart()
+    addBacktestPriceSeries(backtestData)
+    addBacktestCumulativeSeries(backtestData)
+    addBacktestPositionSeries(backtestData)
+  } catch (error) {
+    console.error('Failed to load backtest data:', error)
+  } finally {
+    loadingBacktest.value = false
+  }
+}
+
 // Set up the update_all callback after updateDashboard is defined
 setUpdateAllCallback(updateDashboard)
 
@@ -95,8 +129,12 @@ onMounted(async() => {
   if (chartSectionRef.value?.chartContainer) {
     initChart(chartSectionRef.value.chartContainer)
   }
+  if (backtestSectionRef.value?.chartContainer) {
+    initBacktestChart(backtestSectionRef.value.chartContainer)
+  }
   updateDashboard()
   getEnrichedData()
+  loadBacktestData()
 
   updateTime()
   timeInterval = setInterval(updateTime, 100)
@@ -113,7 +151,8 @@ onBeforeUnmount(() => {
   <div class="dashboard">
     <Header 
       :connected="connected" 
-      :bot-enabled="botEnabled" 
+      :bot-enabled="botEnabled"
+      :current-position="currentPosition"
       @toggle-bot="toggleBot"
     />
 
@@ -125,11 +164,13 @@ onBeforeUnmount(() => {
 
       <Controls
         v-model:session="session"
-        v-model:window-start="windowStart"
-        v-model:window-end="windowEnd"
         v-model:lots-size="lotsSize"
+        v-model:confidence-threshold="confidenceThreshold"
+        v-model:paper="paper"
         @session-change="updateSession"
         @lots-size-change="updateLotsSize"
+        @confidence-threshold-change="updateConfidenceThreshold"
+        @paper-change="updatePaper"
       />
 
       <LogsSection
@@ -138,6 +179,14 @@ onBeforeUnmount(() => {
         @refresh="handleRefreshLogs"
       />
     </main>
+
+    <section class="backtest-container">
+      <BacktestSection
+        ref="backtestSectionRef"
+        :loading-backtest="loadingBacktest"
+        @load="loadBacktestData"
+      />
+    </section>
   </div>
 </template>
 
@@ -146,10 +195,9 @@ onBeforeUnmount(() => {
 
 .dashboard {
   font-family: "Outfit", system-ui, sans-serif;
-  height: 100vh;
-  width: 100vw;
+  min-height: 100vh;
+  width: 100%;
   max-width: 100%;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -159,12 +207,11 @@ onBeforeUnmount(() => {
 
 .main {
   flex: 1;
-  min-height: 0;
   display: grid;
   grid-template-columns: 1fr 280px 320px;
-  gap: 1rem;
-  padding: 1rem;
-  overflow: hidden;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  min-height: 600px;
 }
 
 @media (max-width: 1400px) {
@@ -192,5 +239,16 @@ onBeforeUnmount(() => {
   .logs-section {
     grid-column: 1;
   }
+}
+
+.logs-section {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.backtest-container {
+  padding: 1.5rem;
+  padding-top: 0;
+  min-height: 600px;
 }
 </style>

@@ -1,6 +1,9 @@
+confidence_threshold: 0.1
+current_position: 0
 enabled: true
 gbt_retrain_time: 00:00
 hmm_retrain_time: 00:00
-lots_size: 1
-session: ETH
+lots_size: 5
+paper: true
+session: ALL
 target: 6

@@ -7,24 +7,26 @@ const sessionOptions = [
 
 defineProps<{
   session: "ETH" | "RTH" | "ALL"
-  windowStart: string
-  windowEnd: string
   lotsSize: number
+  confidenceThreshold: number
+  paper: boolean
 }>()
 
 defineEmits<{
   'update:session': [value: "ETH" | "RTH" | "ALL"]
-  'update:windowStart': [value: string]
-  'update:windowEnd': [value: string]
   'update:lotsSize': [value: number]
+  'update:confidenceThreshold': [value: number]
+  'update:paper': [value: boolean]
   'session-change': []
   'lots-size-change': []
+  'confidence-threshold-change': []
+  'paper-change': []
 }>()
 </script>
 
 <template>
   <aside class="controls">
-    <h2 class="controls-title">Session &amp; window</h2>
+    <h2 class="controls-title">Trading Settings</h2>
 
     <div class="field">
       <label class="label">Trading session</label>
@@ -43,29 +45,6 @@ defineEmits<{
       </select>
     </div>
 
-    <div class="field-row">
-      <div class="field">
-        <label class="label">Window start</label>
-        <input
-          :value="windowStart"
-          @input="$emit('update:windowStart', ($event.target as HTMLInputElement).value)"
-          type="time"
-          class="input"
-          step="60"
-        />
-      </div>
-      <div class="field">
-        <label class="label">Window end</label>
-        <input
-          :value="windowEnd"
-          @input="$emit('update:windowEnd', ($event.target as HTMLInputElement).value)"
-          type="time"
-          class="input"
-          step="60"
-        />
-      </div>
-    </div>
-
     <div class="field">
       <label class="label">Lots size</label>
       <input
@@ -76,6 +55,31 @@ defineEmits<{
         min="1"
         step="1"
       />
+    </div>
+
+    <div class="field">
+      <label class="label">Confidence threshold</label>
+      <input
+        :value="confidenceThreshold"
+        @input="$emit('update:confidenceThreshold', Number(($event.target as HTMLInputElement).value)); $emit('confidence-threshold-change')"
+        type="number"
+        class="input"
+        min="0"
+        max="1"
+        step="0.01"
+      />
+    </div>
+
+    <div class="field">
+      <label class="label">Paper trading</label>
+      <select 
+        :value="paper ? 'true' : 'false'"
+        class="select" 
+        @change="$emit('update:paper', ($event.target as HTMLSelectElement).value === 'true'); $emit('paper-change')"
+      >
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
     </div>
   </aside>
 </template>

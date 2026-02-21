@@ -17,3 +17,13 @@ def set_session(session):
     print("Setting session to: ", session)
     set_setting("session", session)
     return {"success": True}
+
+def set_confidence_threshold(confidence_threshold):
+    print("Setting confidence threshold to: ", confidence_threshold)
+    set_setting("confidence_threshold", confidence_threshold)
+    return {"success": True}
+
+def set_paper(paper):
+    print("Setting paper to: ", paper)
+    set_setting("paper", paper)
+    return {"success": True}

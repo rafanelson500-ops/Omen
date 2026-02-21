@@ -26,6 +26,7 @@ from helpers.features import add_regime_features, add_technical_features, add_pr
 from helpers.hmm import load_model as load_hmm, predict_regimes, train_hmm
 from helpers.gbt.chop_gbt import load_model as load_chop_model, predict_chop_target
 from helpers.gbt.trend_gbt import load_model as load_trend_model, predict_trend_target
+from helpers.broker import buy, sell, close_all, refresh_tokens
 import pandas as pd
 from helpers.logs import log
 
@@ -40,6 +41,8 @@ def main(current_time):
     global enriched_data
 
     print("🟢\nCurrent time: ", current_time)
+    if current_time.minute % 5 != 0:
+        return
     log("Run")
     config = load_config()
 
@@ -56,7 +59,7 @@ def main(current_time):
 
     # Calculate difference between current time and last candle time
     difference = current_time.timestamp() - data.iloc[-1]["time"]
-    if difference > 3300:
+    if difference > 330:
         log(f"No new data (difference: {difference}). Last candle time: {datetime.fromtimestamp(data.iloc[-1]["time"]).strftime("%Y-%m-%d %H:%M:%S")}")
         return
 
@@ -83,14 +86,22 @@ def main(current_time):
     trend_model = load_trend_model("trained_models/trend_gbt_model.pkl", data.iloc[:-24])
     data = predict_trend_target(trend_model, data)
 
-    print(data.iloc[-1])
     # Weight & average predictions according to regime probabilities
+    data['weighted_signal'] = data['regime'] * data['chop_signal'] + (1 - data['regime']) * data['trend_signal']
 
     # Execution Logic
-
+    signal = data.iloc[-1]['weighted_signal']
+    if signal > config["confidence_threshold"]:
+        buy()
+        refresh_tokens()
+    elif signal < -config["confidence_threshold"]:
+        sell()
+        refresh_tokens()
+    else:
+        close_all()
+        refresh_tokens()
     # Store featurized & targetted data for frontend visualization
     enriched_data = data.copy()
-    print(enriched_data.iloc[-1])
 
     # If time is hmm retrain time, retrain HMM
     string_time = current_time.strftime("%H:%M")

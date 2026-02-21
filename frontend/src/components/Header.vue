@@ -2,6 +2,7 @@
 defineProps<{
   connected: boolean
   botEnabled: boolean
+  currentPosition: number
 }>()
 
 defineEmits<{
@@ -16,6 +17,12 @@ defineEmits<{
       Cheese Trading Bot - {{ connected ? "Connected" : "Disconnected" }}
     </h1>
     <div class="header-actions">
+      <div class="position-info">
+        <span class="status-label">Position</span>
+        <span class="position-value" :class="{ positive: currentPosition > 0, negative: currentPosition < 0 }">
+          {{ currentPosition }}
+        </span>
+      </div>
       <span class="status-label">Bot</span>
       <button
         type="button"
@@ -124,5 +131,28 @@ defineEmits<{
 
 .status-value.active {
   color: var(--on);
+}
+
+.position-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  margin-right: 1rem;
+}
+
+.position-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.position-value.positive {
+  color: var(--on);
+}
+
+.position-value.negative {
+  color: #ef4444;
 }
 </style>

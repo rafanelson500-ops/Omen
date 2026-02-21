@@ -38,7 +38,7 @@ export const useBackend = () => {
     }
   }
 
-  const request = async (data: any, id: number) => {
+  const request = async (data: any, id: number, timeout: number = 5000) => {
     data.id = id
     if (socket.value) {
       console.log("Sending request: ", data)
@@ -54,8 +54,8 @@ export const useBackend = () => {
         socket.value?.on("message", handler)
         const timeoutId = setTimeout(() => {
           socket.value?.off("message", handler)
-          reject(new Error("Request timed out after 5s"))
-        }, 5000)
+          reject(new Error(`Request timed out after ${timeout}ms`))
+        }, timeout)
       })
     }
   }
@@ -83,16 +83,39 @@ export const useBackend = () => {
 
   const updateDashboard = async () => {
     const botData = await request({ action: "get_all" }, 1) as any
+    const currentPosition = await request({ action: "get_current_position" }, 2) as any
     const logs = await loadLogs()
     return {
       botData: {
         enabled: botData.enabled as boolean,
         session: botData.session,
-        lots_size: botData.lots_size
+        lots_size: botData.lots_size,
+        confidence_threshold: botData.confidence_threshold,
+        paper: botData.paper,
+        current_position: currentPosition.current_position
       },
       logs
     }
   }
 
-  return { connect, connected, sendMessage, request, loadLogs, updateDashboard, setUpdateAllCallback }
+  const trainModels = async (): Promise<void> => {
+    try {
+      await request({ action: "train_models" }, 7, 300000) // 5 minute timeout for training
+    } catch (error) {
+      console.error('Failed to train models:', error)
+      throw error
+    }
+  }
+
+  const getBacktestData = async (): Promise<any[]> => {
+    try {
+      const backtestData = await request({ action: "backtest" }, 8, 60000) // 1 minute timeout
+      return JSON.parse(backtestData as string)
+    } catch (error) {
+      console.error('Failed to get backtest data:', error)
+      throw error
+    }
+  }
+
+  return { connect, connected, sendMessage, request, loadLogs, updateDashboard, setUpdateAllCallback, trainModels, getBacktestData }
 }

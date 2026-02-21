@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Tuple
 from sklearn.ensemble import GradientBoostingRegressor
 import os
-from .gbt_helper import create_sequences, SEQUENCE_LENGTH, _resolve_path
+from .gbt_helper import create_sequences, create_sequences_with_weights, SEQUENCE_LENGTH, _resolve_path
 import joblib
 
 features = [
@@ -24,12 +24,13 @@ features = [
     'ema_alignment',
 ]
 
-def train_trend_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
+def train_trend_gbt(data: pd.DataFrame, model_dir: str = "trained_models") -> GradientBoostingRegressor:
     """
     Train GBT model on sequences.
     
     Args:
         data: DataFrame with all features including 'ForwardReturn'
+        model_dir: Directory to save model (default: "trained_models")
     
     # Returns:
         Trained GradientBoostingRegressor model
@@ -37,19 +38,39 @@ def train_trend_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
     Raises:
         ValueError: If no valid training data after removing NaNs
     """
-    save_path = "trained_models/trend_gbt_model.pkl"
-    # Create sequences from data
-    X_sequences, y_targets = create_sequences(data)
+    save_path = f"{model_dir}/trend_gbt_model.pkl"
+    
+    # Check if regime column exists, if not use uniform weights
+    use_regime_weights = 'regime' in data.columns
+    
+    if use_regime_weights:
+        # Create sequences with regime-based weights (target regime = 0.0 for trend)
+        X_sequences, y_targets, sample_weights = create_sequences_with_weights(
+            data, 
+            regime_col='regime',
+            target_regime=0.0,  # Trend model specializes in regime 0
+            weight_power=1.0     # Linear weighting (can be adjusted)
+        )
+        print(f"Using regime-based weighting for trend model:")
+        print(f"  Weight stats: min={sample_weights.min():.3f}, mean={sample_weights.mean():.3f}, max={sample_weights.max():.3f}")
+        print(f"  Weighted samples: {np.sum(sample_weights > 0.5)}/{len(sample_weights)} with weight > 0.5")
+    else:
+        # Fallback to uniform weights if regime not available
+        X_sequences, y_targets = create_sequences(data)
+        sample_weights = np.ones(len(y_targets))
+        print("Warning: Regime column not found, using uniform weights for trend model")
     
     # Remove NaN targets (from forward-looking calculation)
     valid_mask = ~np.isnan(y_targets)
     X_sequences = X_sequences[valid_mask]
     y_targets = y_targets[valid_mask]
+    sample_weights = sample_weights[valid_mask]
     
     # Also remove any rows with NaN in features
     feature_nan_mask = ~np.isnan(X_sequences).any(axis=1)
     X_sequences = X_sequences[feature_nan_mask]
     y_targets = y_targets[feature_nan_mask]
+    sample_weights = sample_weights[feature_nan_mask]
     
     # Check if we have enough data to train
     if len(X_sequences) == 0:
@@ -66,7 +87,8 @@ def train_trend_gbt(data: pd.DataFrame) -> GradientBoostingRegressor:
             random_state=40,
             verbose=1
         )
-        model.fit(X_sequences, y_targets)
+        # Fit with sample weights to emphasize trend regime samples
+        model.fit(X_sequences, y_targets, sample_weight=sample_weights)
         save_model(model, save_path)
         return model
     except ValueError as e:
@@ -91,16 +113,22 @@ def predict_trend_target(model, data: pd.DataFrame) -> pd.DataFrame:
     # Match create_sequences behavior: it uses data.values which includes ALL columns
     # But we need to handle NaN in target columns (forward_return, target) for recent candles
     # Fill NaN in target columns with 0 so model can make predictions
-    target_cols = ['forward_return', 'target', 'trend_signal', 'chop_signal']
-    feature_cols = [col for col in data.columns if col not in target_cols]
+    # IMPORTANT: Exclude signal columns (chop_signal, trend_signal) that weren't present during training
+    target_cols = ['forward_return', 'target']
+    signal_cols = ['trend_signal', 'chop_signal']  # These shouldn't be in training data
+    feature_cols = [col for col in data.columns if col not in target_cols + signal_cols]
     
     # Create a copy of data and fill NaN in target columns with 0 for sequence creation
+    # Drop signal columns to match training data structure
     data_for_sequences = data.copy()
+    for col in signal_cols:
+        if col in data_for_sequences.columns:
+            data_for_sequences = data_for_sequences.drop(columns=[col])
     for col in target_cols:
         if col in data_for_sequences.columns:
             data_for_sequences[col] = data_for_sequences[col].fillna(0)
     
-    # Get all data (including target cols) to match training format
+    # Get all data (including target cols but excluding signal cols) to match training format
     all_data = data_for_sequences.values
     # Get feature-only data for NaN checking
     feature_data = data[feature_cols].values

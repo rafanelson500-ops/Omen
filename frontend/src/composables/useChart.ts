@@ -4,6 +4,8 @@ import { createChart, ColorType, type IChartApi, type ISeriesApi, CandlestickSer
 export const useChart = () => {
   const chart = ref<IChartApi | null>(null)
   const series = ref<ISeriesApi<any>[]>([])
+  const backtestChart = ref<IChartApi | null>(null)
+  const backtestSeries = ref<ISeriesApi<any>[]>([])
 
   // Match App.vue dark theme: --surface, --text, --muted, --border, --on (green), accent
   const chartTheme = {
@@ -90,6 +92,17 @@ export const useChart = () => {
     bottomFillColor2: 'rgba( 0, 49, 88, 0.28)',
   }
 
+  const weightedSignalSeriesOptions = {
+    baseValue: { type: 'price' as const, price: 0 },
+    topLineColor: 'rgb(0, 255, 149)',
+    topFillColor1: 'rgba( 0, 255, 149, 0.28)',
+    topFillColor2: 'rgba( 0, 255, 149, 0.05)',
+    bottomLineColor: 'rgb(255, 58, 58)',
+    bottomFillColor1: 'rgba( 255, 58, 58, 0.05)',
+    bottomFillColor2: 'rgba( 255, 58, 58, 0.28)',
+  }
+
+
   const initChart = (container: HTMLElement) => {
     chart.value = createChart(container, chartOptions)
   }
@@ -148,6 +161,17 @@ export const useChart = () => {
     series.value.push(trendSignalSeries)
   }
 
+  const addWeightedSignalSeries = (data: any[]) => {
+    if (!chart.value) return;
+    const weightedSignalSeries = chart.value.addSeries(BaselineSeries, weightedSignalSeriesOptions, 3)
+    const weightedSignalData = data.map((row: any) => ({
+      time: row.time,
+      value: row.weighted_signal,
+    }))
+    weightedSignalSeries.setData(weightedSignalData)
+    series.value.push(weightedSignalSeries)
+  }
+
   const addRegimeSeries = (data: any[]) => {
     if (!chart.value) return;
     const regimeSeries = chart.value.addSeries(BaselineSeries, regimeSeriesOptions, 2)
@@ -166,5 +190,111 @@ export const useChart = () => {
     series.value = []
   }
 
-  return { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, clearChart }
+  // Backtest chart functions
+  const initBacktestChart = (container: HTMLElement) => {
+    backtestChart.value = createChart(container, chartOptions)
+  }
+
+  const addBacktestPriceSeries = (data: any[]) => {
+    if (!backtestChart.value) return;
+    const priceSeries = backtestChart.value.addSeries(CandlestickSeries, priceSeriesOptions, 0)
+    const priceData = data.map((row: any) => ({
+      time: row.time,
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+    }))
+    priceSeries.setData(priceData)
+    backtestSeries.value.push(priceSeries)
+  }
+
+  const strategySeriesOptions = {
+    color: 'rgb(0, 255, 149)',
+    lineWidth: 2 as const,
+    priceFormat: {
+      type: 'price' as const,
+      precision: 4,
+      minMove: 0.0001,
+    },
+  }
+
+  const buyHoldSeriesOptions = {
+    color: 'rgb(148, 163, 184)',
+    lineWidth: 2 as const,
+    priceFormat: {
+      type: 'price' as const,
+      precision: 4,
+      minMove: 0.0001,
+    },
+  }
+
+  const positionSeriesOptions = {
+    baseValue: { type: 'price' as const, price: 0 },
+    topLineColor: 'rgb(34, 197, 94)', // Green
+    topFillColor1: 'rgba(34, 197, 94, 0.28)',
+    topFillColor2: 'rgba(34, 197, 94, 0.05)',
+    bottomLineColor: 'rgb(239, 68, 68)', // Red
+    bottomFillColor1: 'rgba(239, 68, 68, 0.05)',
+    bottomFillColor2: 'rgba(239, 68, 68, 0.28)',
+  }
+
+  const addBacktestCumulativeSeries = (data: any[]) => {
+    if (!backtestChart.value) return;
+    
+    // Add strategy cumulative returns
+    const strategySeries = backtestChart.value.addSeries(LineSeries, strategySeriesOptions, 1)
+    const strategyData = data.map((row: any) => ({
+      time: row.time,
+      value: row.cum_strategy || 1.0,
+    }))
+    strategySeries.setData(strategyData)
+    backtestSeries.value.push(strategySeries)
+
+    // Add buy-and-hold cumulative returns
+    const buyHoldSeries = backtestChart.value.addSeries(LineSeries, buyHoldSeriesOptions, 1)
+    const buyHoldData = data.map((row: any) => ({
+      time: row.time,
+      value: row.cum_buy_hold || 1.0,
+    }))
+    buyHoldSeries.setData(buyHoldData)
+    backtestSeries.value.push(buyHoldSeries)
+  }
+
+  const addBacktestPositionSeries = (data: any[]) => {
+    if (!backtestChart.value) return;
+    
+    const positionSeries = backtestChart.value.addSeries(BaselineSeries, positionSeriesOptions, 2)
+    const positionData = data.map((row: any) => ({
+      time: row.time,
+      value: row.position || 0,
+    }))
+    positionSeries.setData(positionData)
+    backtestSeries.value.push(positionSeries)
+  }
+
+  const clearBacktestChart = () => {
+    backtestSeries.value.forEach(series => {
+      backtestChart.value?.removeSeries(series)
+    })
+    backtestSeries.value = []
+  }
+
+  return { 
+    chart, 
+    initChart, 
+    addPriceSeries, 
+    addRegimeSeries, 
+    addValueAreaSeries, 
+    addChopSignalSeries, 
+    addTrendSignalSeries, 
+    addWeightedSignalSeries, 
+    clearChart,
+    backtestChart,
+    initBacktestChart,
+    addBacktestPriceSeries,
+    addBacktestCumulativeSeries,
+    addBacktestPositionSeries,
+    clearBacktestChart
+  }
 }
