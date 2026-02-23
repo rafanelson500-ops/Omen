@@ -91,12 +91,14 @@ def main(current_time):
 
     # Execution Logic
     signal = data.iloc[-1]['weighted_signal']
-    if signal > config["confidence_threshold"]:
-        buy()
-    elif signal < -config["confidence_threshold"]:
-        sell()
+    last_signal = data.iloc[-2]['weighted_signal']
+    if signal > config["confidence_threshold"] and last_signal <= config["confidence_threshold"]:
+        buy(data.iloc[-1]['close'])
+    elif signal < -config["confidence_threshold"] and last_signal >= -config["confidence_threshold"]:
+        sell(data.iloc[-1]['close'])
     else:
-        close_all()
+        #close_all()
+        pass
     # Store featurized & targetted data for frontend visualization
     enriched_data = data.copy()
 

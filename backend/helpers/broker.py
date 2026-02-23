@@ -36,54 +36,51 @@ def get_webhook_url(mode):
 def get_positions(default=0):
     return load_setting("current_position") or default
 
-def buy():
+def buy(price):
+    config = load_config()
+    contract_lots = config["lots_size"]
+    mode = config.get("mode", "paper")
+    url = get_webhook_url(mode)
+
+    log(f"Enter long")
+    headers = {
+        "Content-Type": "application/json",
+    }
+    body = {
+        "ticker": SYMBOL,
+        "action": "buy",
+        "signalPrice": price,
+        "quantity": contract_lots,
+    }
+
+    response = requests.post(url, headers=headers, json=body)
+    set_setting("current_position", contract_lots)
+    print(response.text)
+
+
+def sell(price):
     config = load_config()
     contract_lots = config["lots_size"]
     mode = config.get("mode", "paper")
     url = get_webhook_url(mode)
 
     current = get_positions()
-    cons_to_buy = contract_lots - current
-    if cons_to_buy > 0:
-        log(f"Enter long")
-        headers = {
-            "Content-Type": "application/json",
-        }
-        body = {
-            "ticker": SYMBOL,
-            "action": "buy",
-            "quantity": cons_to_buy,
-        }
+    log(f"Enter short")
+    headers = {
+        "Content-Type": "application/json",
+    }
+    body = {
+        "ticker": SYMBOL,
+        "signalPrice": price,
+        "action": "sell",
+        "quantity": contract_lots,
+    }
 
-        response = requests.post(url, headers=headers, json=body)
-        set_setting("current_position", contract_lots)
-        print(response.text)
+    response = requests.post(url, headers=headers, json=body)
+    set_setting("current_position", -contract_lots)
+    print(response.text)
 
-
-def sell():
-    config = load_config()
-    contract_lots = config["lots_size"]
-    mode = config.get("mode", "paper")
-    url = get_webhook_url(mode)
-
-    current = get_positions()
-    cons_to_sell = current + contract_lots
-    if cons_to_sell > 0:
-        log(f"Enter short")
-        headers = {
-            "Content-Type": "application/json",
-        }
-        body = {
-            "ticker": SYMBOL,
-            "action": "sell",
-            "quantity": cons_to_sell,
-        }
-
-        response = requests.post(url, headers=headers, json=body)
-        set_setting("current_position", -contract_lots)
-        print(response.text)
-
-def close_all():
+def close_all(price):
     try:
         config = load_config()
         mode = config.get("mode", "paper")
@@ -100,6 +97,7 @@ def close_all():
             body = {
                 "ticker": SYMBOL,
                 "action": "buy",
+                "signalPrice": price,
                 "quantity": cons_to_buy,
             }
 

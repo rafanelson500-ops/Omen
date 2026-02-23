@@ -85,6 +85,35 @@ def backtest():
     # Set price change to 0 for new sessions (gaps > 5 minutes)
     data['price_change'] = np.where(data['new_session'] == 1, 0, data['price_change'])
     
+    # Simulated stop loss: for each contiguous position signal, track cumulative
+    # PnL from entry. If it drops to or below -stop_loss_threshold, zero out the
+    # remaining candles of that signal.
+    stop_loss_threshold = 15
+    positions = data['position'].values.copy()
+    price_changes = data['price_change'].values
+    i = 0
+    n = len(positions)
+    while i < n:
+        if positions[i] == 0:
+            i += 1
+            continue
+        # Start of a new signal (entry)
+        entry_pos = positions[i]
+        cum_pnl = 0.0
+        entry_idx = i
+        i += 1  # move to next candle; PnL accrues from candle after entry
+        while i < n and positions[i] == entry_pos:
+            # PnL at this candle = price_change * direction of the signal
+            cum_pnl += price_changes[i] * entry_pos
+            if cum_pnl <= -stop_loss_threshold:
+                # Stop loss hit — zero out from this candle onward in the signal
+                while i < n and positions[i] == entry_pos:
+                    positions[i] = 0
+                    i += 1
+                break
+            i += 1
+    data['position'] = positions
+    
     # Buy-and-hold strategy: hold 1 unit, P&L is the raw price change
     # At each candle, we earn/lose the price change
     data['buy_hold_pnl'] = data['price_change']
