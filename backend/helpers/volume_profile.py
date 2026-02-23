@@ -133,11 +133,9 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
     val_results = np.full(len(df), np.nan, dtype=np.float64)
     vah_results = np.full(len(df), np.nan, dtype=np.float64)
     
-    # Calculate volume profile only every 6 candles for performance
-    calculation_interval = 6
-    
-    # Process windows at intervals
-    for i in range(lookback, len(df), calculation_interval):
+    # Calculate volume profile for every candle to avoid look-ahead bias
+    # This ensures each candle's VAL/VAH is based only on the lookback window ending at that candle
+    for i in range(lookback, len(df)):
         start_idx = i - lookback
         window_lows = lows[start_idx:i]
         window_highs = highs[start_idx:i]
@@ -164,17 +162,6 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
         val, vah = _calculate_value_area(prices_sorted, vols_sorted, value_area_pct)
         val_results[i] = val
         vah_results[i] = vah
-    
-    # Forward-fill the calculated values to fill in the gaps
-    last_val = np.nan
-    last_vah = np.nan
-    for i in range(len(val_results)):
-        if not np.isnan(val_results[i]):
-            last_val = val_results[i]
-            last_vah = vah_results[i]
-        elif not np.isnan(last_val):
-            val_results[i] = last_val
-            vah_results[i] = last_vah
     
     # Assign results back to dataframe (much faster than iloc)
     df["val"] = val_results

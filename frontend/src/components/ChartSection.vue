@@ -26,7 +26,7 @@ defineExpose({
 @import '../styles/variables.css';
 
 .chart-section {
-  min-height: 500px;
+  min-height: 90vh;
   display: flex;
   flex-direction: column;
   background: var(--surface);

@@ -91,7 +91,7 @@ export const useBackend = () => {
         session: botData.session,
         lots_size: botData.lots_size,
         confidence_threshold: botData.confidence_threshold,
-        paper: botData.paper,
+        mode: botData.mode,
         current_position: currentPosition.current_position
       },
       logs

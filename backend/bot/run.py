@@ -26,7 +26,7 @@ from helpers.features import add_regime_features, add_technical_features, add_pr
 from helpers.hmm import load_model as load_hmm, predict_regimes, train_hmm
 from helpers.gbt.chop_gbt import load_model as load_chop_model, predict_chop_target
 from helpers.gbt.trend_gbt import load_model as load_trend_model, predict_trend_target
-from helpers.broker import buy, sell, close_all, refresh_tokens
+from helpers.broker import buy, sell, close_all
 import pandas as pd
 from helpers.logs import log
 
@@ -42,7 +42,7 @@ def main(current_time):
 
     print("🟢\nCurrent time: ", current_time)
     if current_time.minute % 5 != 0:
-        return
+       return
     log("Run")
     config = load_config()
 
@@ -93,25 +93,12 @@ def main(current_time):
     signal = data.iloc[-1]['weighted_signal']
     if signal > config["confidence_threshold"]:
         buy()
-        refresh_tokens()
     elif signal < -config["confidence_threshold"]:
         sell()
-        refresh_tokens()
     else:
         close_all()
-        refresh_tokens()
     # Store featurized & targetted data for frontend visualization
     enriched_data = data.copy()
-
-    # If time is hmm retrain time, retrain HMM
-    string_time = current_time.strftime("%H:%M")
-    if string_time == config["hmm_retrain_time"]:
-        log("Retraining HMM...")
-        train_hmm(data)
-
-    # If time is multiple of retrain interval, retrain GBTs
-    if string_time == config["gbt_retrain_time"]:
-        log("Retraining GBTs...")
 
 def loop():
     while True:

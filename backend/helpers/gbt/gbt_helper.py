@@ -5,6 +5,11 @@ from pathlib import Path
 
 SEQUENCE_LENGTH = 100
 
+# Columns that must never appear in model input features.
+# forward_return / target are forward-looking labels that change as new candles
+# arrive, so including them causes historical predictions to shift.
+_EXCLUDE_FROM_FEATURES = {'forward_return', 'target'}
+
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
 def _resolve_path(path: str) -> Path:
@@ -12,9 +17,14 @@ def _resolve_path(path: str) -> Path:
     p = Path(path)
     return p if p.is_absolute() else (_BACKEND_ROOT / path).resolve()
 
+def _feature_columns(data: pd.DataFrame, extra_exclude: set | None = None) -> list[str]:
+    """Return column names safe to use as model input features."""
+    exclude = _EXCLUDE_FROM_FEATURES | (extra_exclude or set())
+    return [c for c in data.columns if c not in exclude]
+
 def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-    print(data.columns)
-    feature_data = data.values
+    feature_cols = _feature_columns(data)
+    feature_data = data[feature_cols].values
     targets = data['target'].values
     
     X_sequences = []
@@ -27,7 +37,7 @@ def create_sequences(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         # Flatten the sequence into a single feature vector
         flattened_sequence = sequence.flatten()
         X_sequences.append(flattened_sequence)
-        # Target is the next candle's ForwardReturn value
+        # Target is the next candle's target value
         y_targets.append(targets[i])
     
     return np.array(X_sequences), np.array(y_targets)
@@ -51,7 +61,8 @@ def create_sequences_with_weights(
     Returns:
         Tuple of (X_sequences, y_targets, sample_weights)
     """
-    feature_data = data.values
+    feature_cols = _feature_columns(data)
+    feature_data = data[feature_cols].values
     targets = data['target'].values
     
     # Get regime values if available

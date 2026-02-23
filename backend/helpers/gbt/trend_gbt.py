@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Tuple
 from sklearn.ensemble import GradientBoostingRegressor
 import os
-from .gbt_helper import create_sequences, create_sequences_with_weights, SEQUENCE_LENGTH, _resolve_path
+from .gbt_helper import create_sequences, create_sequences_with_weights, SEQUENCE_LENGTH, _resolve_path, _feature_columns
 import joblib
 
 features = [
@@ -110,27 +110,11 @@ def predict_trend_target(model, data: pd.DataFrame) -> pd.DataFrame:
         DataFrame with added 'chop_signal' column (binary_prediction * confidence, where
         binary_prediction is 1 or -1 and confidence is 0-1)
     """
-    # Match create_sequences behavior: it uses data.values which includes ALL columns
-    # But we need to handle NaN in target columns (forward_return, target) for recent candles
-    # Fill NaN in target columns with 0 so model can make predictions
-    # IMPORTANT: Exclude signal columns (chop_signal, trend_signal) that weren't present during training
-    target_cols = ['forward_return', 'target']
-    signal_cols = ['trend_signal', 'chop_signal']  # These shouldn't be in training data
-    feature_cols = [col for col in data.columns if col not in target_cols + signal_cols]
-    
-    # Create a copy of data and fill NaN in target columns with 0 for sequence creation
-    # Drop signal columns to match training data structure
-    data_for_sequences = data.copy()
-    for col in signal_cols:
-        if col in data_for_sequences.columns:
-            data_for_sequences = data_for_sequences.drop(columns=[col])
-    for col in target_cols:
-        if col in data_for_sequences.columns:
-            data_for_sequences[col] = data_for_sequences[col].fillna(0)
-    
-    # Get all data (including target cols but excluding signal cols) to match training format
-    all_data = data_for_sequences.values
-    # Get feature-only data for NaN checking
+    # Exclude forward-looking target cols and signal cols to match training features.
+    # _feature_columns already excludes forward_return/target; also exclude signals
+    # that are added by other predict functions and weren't present during training.
+    signal_cols = {'trend_signal', 'chop_signal'}
+    feature_cols = _feature_columns(data, extra_exclude=signal_cols)
     feature_data = data[feature_cols].values
     
     # Create sequences for prediction (matching create_sequences format)
@@ -139,15 +123,10 @@ def predict_trend_target(model, data: pd.DataFrame) -> pd.DataFrame:
     
     # Create sliding windows starting from SEQUENCE_LENGTH
     for i in range(SEQUENCE_LENGTH, len(data)):
-        # Check if sequence has any NaN values in FEATURE columns only
-        # (ignore NaN in target columns like forward_return/target for recent candles)
         feature_sequence = feature_data[i - SEQUENCE_LENGTH:i]
         if np.isnan(feature_sequence).any():
             continue
-        # Get sequence of previous candles (all columns to match training, with NaN filled)
-        sequence = all_data[i - SEQUENCE_LENGTH:i]
-        # Flatten the sequence into a single feature vector (matching create_sequences)
-        flattened_sequence = sequence.flatten()
+        flattened_sequence = feature_sequence.flatten()
         X_sequences.append(flattened_sequence)
         valid_indices.append(i)
     

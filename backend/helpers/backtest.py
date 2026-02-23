@@ -10,7 +10,7 @@ from helpers.features import add_regime_features, add_technical_features, add_pr
 from helpers.hmm import load_model as load_hmm, predict_regimes, train_hmm
 from helpers.gbt.chop_gbt import load_model as load_chop_model, predict_chop_target, train_chop_gbt
 from helpers.gbt.trend_gbt import load_model as load_trend_model, predict_trend_target, train_trend_gbt
-from helpers.broker import buy, sell, close_all, refresh_tokens
+from helpers.broker import buy, sell, close_all
 import pandas as pd
 from helpers.logs import log
 import numpy as np
@@ -25,7 +25,7 @@ def train_models():
         # Get all available data, then use 1/5 for training
         all_data = get_data(data = config["session"], jsonify = False, include_volume = True, all_data = True)
         # Take first 1/5 of data for training (maintains chronological order)
-        data = all_data.iloc[:len(all_data) // 5]
+        data = all_data.iloc[:len(all_data) // 2]
         data = add_regime_features(data)
         data = add_technical_features(data)
         data = add_prediction_features_chop(data)
@@ -55,7 +55,7 @@ def backtest():
     
     # Drop all rows with NaN except in 'forward_return' and 'target'
     cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
-    data.dropna(subset=cols_to_check, inplace=True)
+    data = data.dropna(subset=cols_to_check).iloc[len(data)//2:]
 
 
     # Run HMM model to get probabilities of each regime
@@ -101,6 +101,7 @@ def backtest():
     data['cum_strategy'] = data['strategy_pnl'].cumsum()
     data['cum_buy_hold'] = data['buy_hold_pnl'].cumsum()
     
+    #Return 2nd half of data
     return data
 
 if __name__ == "__main__":

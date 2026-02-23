@@ -23,7 +23,7 @@ def set_confidence_threshold(confidence_threshold):
     set_setting("confidence_threshold", confidence_threshold)
     return {"success": True}
 
-def set_paper(paper):
-    print("Setting paper to: ", paper)
-    set_setting("paper", paper)
+def set_mode(mode):
+    print("Setting mode to: ", mode)
+    set_setting("mode", mode)
     return {"success": True}

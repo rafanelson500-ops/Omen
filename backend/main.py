@@ -2,7 +2,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from helpers.config_handler import load_setting, set_setting, load_config
-from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size, set_session, set_confidence_threshold, set_paper
+from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size, set_session, set_confidence_threshold, set_mode
 from helpers.broker import get_positions
 from helpers.logs import get_logs
 from helpers.data_handler import get_data
@@ -28,7 +28,7 @@ actions = {
     "get_all": load_config,
     "set_lots_size": set_lots_size,
     "set_confidence_threshold": set_confidence_threshold,
-    "set_paper": set_paper,
+    "set_mode": set_mode,
     "get_current_position": lambda: {"current_position": get_positions()},
     "get_data": get_data,
     "get_enriched_data": get_enriched_data,
@@ -59,6 +59,7 @@ def handle_message(data):
             if 'id' in data:
                 emit('message', {'data': response, 'id': data['id']})
             if 'update_all' in data and data['update_all']:
+                print(f"Broadcasting update_all to all clients after {data['action']}")
                 socketio.emit('message', {'data': 'update_all', 'id': -1})
         else:
             print("Unknown action: ", data['action'])

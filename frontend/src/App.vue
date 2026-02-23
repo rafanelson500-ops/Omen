@@ -13,7 +13,7 @@ const botEnabled = ref(false)
 const session = ref<"ETH" | "RTH" | "ALL">("RTH")
 const lotsSize = ref(1)
 const confidenceThreshold = ref(0)
-const paper = ref(true)
+const mode = ref<"paper" | "live" | "prop">("paper")
 const currentPosition = ref(0)
 const chartSectionRef = ref<InstanceType<typeof ChartSection> | null>(null)
 const backtestSectionRef = ref<InstanceType<typeof BacktestSection> | null>(null)
@@ -60,8 +60,8 @@ const updateConfidenceThreshold = () => {
   sendMessage({ action: "set_confidence_threshold", data: confidenceThreshold.value, update_all: true})
 }
 
-const updatePaper = () => {
-  sendMessage({ action: "set_paper", data: paper.value, update_all: true})
+const updateMode = () => {
+  sendMessage({ action: "set_mode", data: mode.value, update_all: true})
 }
 
 const getEnrichedData = async () => {
@@ -73,7 +73,7 @@ const getEnrichedData = async () => {
   addTrendSignalSeries(enrichedData)
   addRegimeSeries(enrichedData)
   addWeightedSignalSeries(enrichedData)
-  console.log(enrichedData[enrichedData.length - 1])
+  console.log(enrichedData)
 }
 
 const updateSession = async () => {
@@ -88,7 +88,7 @@ const updateDashboard = async () => {
     session.value = botData.session
     lotsSize.value = botData.lots_size
     confidenceThreshold.value = botData.confidence_threshold
-    paper.value = botData.paper
+    mode.value = botData.mode
     currentPosition.value = botData.current_position
     logs.value = loadedLogs
   } finally {
@@ -166,11 +166,11 @@ onBeforeUnmount(() => {
         v-model:session="session"
         v-model:lots-size="lotsSize"
         v-model:confidence-threshold="confidenceThreshold"
-        v-model:paper="paper"
+        v-model:mode="mode"
         @session-change="updateSession"
         @lots-size-change="updateLotsSize"
         @confidence-threshold-change="updateConfidenceThreshold"
-        @paper-change="updatePaper"
+        @mode-change="updateMode"
       />
 
       <LogsSection

@@ -1,5 +1,5 @@
 import { ref } from "vue"
-import { createChart, ColorType, type IChartApi, type ISeriesApi, CandlestickSeries, LineSeries, BaselineSeries } from "lightweight-charts"
+import { createChart, ColorType, type IChartApi, type ISeriesApi, CandlestickSeries, LineSeries, BaselineSeries, CrosshairMode } from "lightweight-charts"
 
 export const useChart = () => {
   const chart = ref<IChartApi | null>(null)
@@ -32,6 +32,7 @@ export const useChart = () => {
     crosshair: {
       vertLine: { color: chartTheme.muted, labelBackgroundColor: chartTheme.accent },
       horzLine: { color: chartTheme.muted, labelBackgroundColor: chartTheme.accent },
+      mode: CrosshairMode.Normal,
     },
     rightPriceScale: {
       borderColor: chartTheme.border,

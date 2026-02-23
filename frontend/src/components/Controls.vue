@@ -9,18 +9,18 @@ defineProps<{
   session: "ETH" | "RTH" | "ALL"
   lotsSize: number
   confidenceThreshold: number
-  paper: boolean
+  mode: "paper" | "live" | "prop"
 }>()
 
 defineEmits<{
   'update:session': [value: "ETH" | "RTH" | "ALL"]
   'update:lotsSize': [value: number]
   'update:confidenceThreshold': [value: number]
-  'update:paper': [value: boolean]
+  'update:mode': [value: "paper" | "live" | "prop"]
   'session-change': []
   'lots-size-change': []
   'confidence-threshold-change': []
-  'paper-change': []
+  'mode-change': []
 }>()
 </script>
 
@@ -71,14 +71,15 @@ defineEmits<{
     </div>
 
     <div class="field">
-      <label class="label">Paper trading</label>
+      <label class="label">Trading environment</label>
       <select 
-        :value="paper ? 'true' : 'false'"
+        :value="mode"
         class="select" 
-        @change="$emit('update:paper', ($event.target as HTMLSelectElement).value === 'true'); $emit('paper-change')"
+        @change="$emit('update:mode', ($event.target as HTMLSelectElement).value as 'prop' | 'live' | 'paper'); $emit('mode-change')"
       >
-        <option value="true">Yes</option>
-        <option value="false">No</option>
+        <option value="paper">Paper</option>
+        <option value="live">Live</option>
+        <option value="prop">Prop</option>
       </select>
     </div>
   </aside>

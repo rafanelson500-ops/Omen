@@ -53,7 +53,7 @@ defineEmits<{
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 90vh;
 }
 
 .logs-header {
