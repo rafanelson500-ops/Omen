@@ -41,9 +41,8 @@ def main(current_time):
     global enriched_data
 
     print("🟢\nCurrent time: ", current_time)
-    if current_time.minute % 5 != 0:
-       return
-    log("Run")
+    # if current_time.minute % 5 != 0:
+    #    return
     config = load_config()
 
     # Check if bot is enabled
@@ -92,13 +91,14 @@ def main(current_time):
     # Execution Logic
     signal = data.iloc[-1]['weighted_signal']
     last_signal = data.iloc[-2]['weighted_signal']
-    if signal > config["confidence_threshold"] and last_signal <= config["confidence_threshold"]:
-        buy(data.iloc[-1]['close'])
-    elif signal < -config["confidence_threshold"] and last_signal >= -config["confidence_threshold"]:
-        sell(data.iloc[-1]['close'])
-    else:
-        #close_all()
-        pass
+
+    if signal > config["confidence_threshold"]:
+        if config["current_position"] == 0 or last_signal <= config["confidence_threshold"]:
+            buy(data.iloc[-1]['close'])
+    elif signal < -config["confidence_threshold"]:
+        if config["current_position"] == 0 or last_signal >= -config["confidence_threshold"]:
+            sell(data.iloc[-1]['close'])
+
     # Store featurized & targetted data for frontend visualization
     enriched_data = data.copy()
 

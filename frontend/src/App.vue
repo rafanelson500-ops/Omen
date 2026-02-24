@@ -21,6 +21,8 @@ const loadingChartData = ref(false)
 const logs = ref<Array<{ timestamp: string; message: string }>>([])
 const loadingLogs = ref(false)
 const loadingBacktest = ref(false)
+const cachedBacktestData = ref<any[]>([])
+const backtestDataLength = ref(0)
 
 const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback, getBacktestData } = useBackend()
 const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, addWeightedSignalSeries, clearChart, initBacktestChart, addBacktestPriceSeries, addBacktestCumulativeSeries, addBacktestPositionSeries, clearBacktestChart } = useChart()
@@ -105,19 +107,44 @@ const handleRefreshLogs = async () => {
   }
 }
 
+const renderBacktestData = (data: any[]) => {
+  clearBacktestChart()
+  addBacktestPriceSeries(data)
+  addBacktestCumulativeSeries(data)
+  addBacktestPositionSeries(data)
+}
+
 const loadBacktestData = async () => {
   loadingBacktest.value = true
   try {
     const backtestData = await getBacktestData()
-    clearBacktestChart()
-    addBacktestPriceSeries(backtestData)
-    addBacktestCumulativeSeries(backtestData)
-    addBacktestPositionSeries(backtestData)
+    cachedBacktestData.value = backtestData
+    backtestDataLength.value = backtestData.length
+    renderBacktestData(backtestData)
   } catch (error) {
     console.error('Failed to load backtest data:', error)
   } finally {
     loadingBacktest.value = false
   }
+}
+
+const handleBacktestRangeChange = (start: number, end: number) => {
+  if (cachedBacktestData.value.length === 0) return
+  const sliced = cachedBacktestData.value.slice(start, end)
+  if (sliced.length === 0) return
+  const strategyOffset = sliced[0].cum_strategy || 0
+  const buyHoldOffset = sliced[0].cum_buy_hold || 0
+  const adjusted = sliced.map((row: any) => ({
+    ...row,
+    cum_strategy: (row.cum_strategy || 0) - strategyOffset,
+    cum_buy_hold: (row.cum_buy_hold || 0) - buyHoldOffset,
+  }))
+  renderBacktestData(adjusted)
+}
+
+const handleBacktestReset = () => {
+  if (cachedBacktestData.value.length === 0) return
+  renderBacktestData(cachedBacktestData.value)
 }
 
 // Set up the update_all callback after updateDashboard is defined
@@ -184,7 +211,10 @@ onBeforeUnmount(() => {
       <BacktestSection
         ref="backtestSectionRef"
         :loading-backtest="loadingBacktest"
+        :data-length="backtestDataLength"
         @load="loadBacktestData"
+        @range-change="handleBacktestRangeChange"
+        @reset="handleBacktestReset"
       />
     </section>
   </div>

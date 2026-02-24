@@ -17,7 +17,7 @@ live_url = os.getenv("LIVE_URL")
 paper_url = os.getenv("PAPER_URL")
 access_token = None
 
-SYMBOL = "ES"
+SYMBOL = "MES"
 
 def _is_paper_mode(mode):
     """Returns True if mode is paper trading (paper or prop), False for live"""

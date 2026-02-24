@@ -1,9 +1,12 @@
 import { ref } from "vue"
 import { io, type Socket } from "socket.io-client"
 
-const BACKEND_URL = import.meta.env.VITE_API_URL
 
 export const useBackend = () => {
+  let BACKEND_URL = import.meta.env.VITE_API_URL
+  if (window.location.hostname === "192.168.1.149") {
+    BACKEND_URL = "http://192.168.1.149:8000"
+  }
   const socket = ref<Socket | null>(null)
   const connected = ref(false)
   const onUpdateAllCallback = ref<(() => void) | null>(null)

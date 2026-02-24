@@ -55,7 +55,7 @@ def backtest():
     
     # Drop all rows with NaN except in 'forward_return' and 'target'
     cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
-    data = data.dropna(subset=cols_to_check).iloc[len(data)//2:]
+    data = data.dropna(subset=cols_to_check).iloc[-len(data)//2:]
 
 
     # Run HMM model to get probabilities of each regime
@@ -73,9 +73,11 @@ def backtest():
     # Weight & average predictions according to regime probabilities
     data['weighted_signal'] = data['regime'] * data['chop_signal'] + (1 - data['regime']) * data['trend_signal']
     data['position'] = np.where(data['weighted_signal'] > config["confidence_threshold"], 1, np.where(data['weighted_signal'] < -config["confidence_threshold"], -1, 0))
+    data['position'] = np.where(data['position'] == 0, data['position'].shift(1), data['position'])
     
     # Calculate returns
-    data = data.dropna()
+    cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
+    data.dropna(subset=cols_to_check, inplace=True)
     
     # Calculate raw P&L (price difference) from one candle to the next
     # This represents the actual dollar change in price
