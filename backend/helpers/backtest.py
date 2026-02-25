@@ -45,7 +45,6 @@ def backtest():
     config = load_config()
 
     data = get_data(config["session"], jsonify = False, include_volume = True, all_data = True)
-    print(data.head())
 
     # Featurize data
     data = add_regime_features(data)
@@ -136,20 +135,117 @@ def backtest():
     #Return 2nd half of data
     return data
 
-def monte_carlo_backtest():
+def monte_carlo_backtest(n_iterations=100):
     config = load_config()
+
     data = get_data(config["session"], jsonify = False, include_volume = True, all_data = True)
+
+    # Featurize data
     data = add_regime_features(data)
     data = add_technical_features(data)
     data = add_prediction_features_chop(data)
     data = add_prediction_features_trend(data)
     data = add_targets(data)
 
-    results = {
-        "iterations": [],
-        "average_return"
+    # Drop all rows with NaN except in 'forward_return' and 'target' — skip first 1/5
+    cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
+    data = data.dropna(subset=cols_to_check).iloc[len(data)//5:]
+
+    # Run HMM model
+    hmm_model = load_hmm("backtest_models/regime_model.pkl", data.iloc[:1500])
+    data["regime"] = predict_regimes(hmm_model, data)
+
+    # Run Chop & Trend GBTs
+    chop_model = load_chop_model("backtest_models/chop_gbt_model.pkl", data.iloc[:1500])
+    data = predict_chop_target(chop_model, data)
+
+    trend_model = load_trend_model("backtest_models/trend_gbt_model.pkl", data.iloc[:1500])
+    data = predict_trend_target(trend_model, data)
+
+    # Compute weighted signal & positions
+    data['weighted_signal'] = data['regime'] * data['chop_signal'] + (1 - data['regime']) * data['trend_signal']
+    data['position'] = np.where(data['weighted_signal'] > config["confidence_threshold"], 1, np.where(data['weighted_signal'] < -config["confidence_threshold"], -1, 0))
+    data['position'] = np.where(data['position'] == 0, data['position'].shift(1), data['position'])
+
+    cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
+    data.dropna(subset=cols_to_check, inplace=True)
+
+    # Raw price change per candle
+    data['price_change'] = data['close'] - data['close'].shift(1)
+    data['price_change'] = data['price_change'].fillna(0)
+    data['price_change'] = np.where(data['new_session'] == 1, 0, data['price_change'])
+
+    # Apply stop-loss (same logic as backtest)
+    stop_loss_threshold = 10
+    positions = data['position'].values.copy()
+    price_changes = data['price_change'].values
+    i = 0
+    n = len(positions)
+    while i < n:
+        if positions[i] == 0:
+            i += 1
+            continue
+        entry_pos = positions[i]
+        cum_pnl = 0.0
+        i += 1
+        while i < n and positions[i] == entry_pos:
+            cum_pnl += price_changes[i] * entry_pos
+            if cum_pnl <= -stop_loss_threshold:
+                while i < n and positions[i] == entry_pos:
+                    positions[i] = 0
+                    i += 1
+                break
+            i += 1
+    data['position'] = positions
+
+    # Per-candle strategy PnL
+    data['strategy_pnl'] = data['price_change'] * data['position'].shift(1).fillna(0)
+
+    # Timestamps and PnL values for bootstrapping
+    timestamps = data['time'].values.tolist()
+    pnl_values = data['strategy_pnl'].values
+
+    # Monte Carlo: bootstrap iterations
+    iterations = []
+    max_profits = []
+    max_drawdowns = []
+    total_returns = []
+
+    for it in range(n_iterations):
+        # Bootstrap resample PnL values with replacement (shuffle luck/order)
+        sampled_pnl = np.random.choice(pnl_values, size=len(pnl_values), replace=True)
+        cum_pnl = np.cumsum(sampled_pnl)
+
+        max_profit = float(np.max(cum_pnl))
+        running_max = np.maximum.accumulate(cum_pnl)
+        max_drawdown = float(np.min(cum_pnl - running_max))
+        total_return = float(cum_pnl[-1])
+
+        equity_curve = [
+            {"time": int(t), "value": float(v)}
+            for t, v in zip(timestamps, cum_pnl)
+        ]
+
+        iterations.append({
+            "id": it,
+            "equity_curve": equity_curve,
+            "max_profit": max_profit,
+            "max_drawdown": max_drawdown,
+            "total_return": total_return,
+        })
+
+        max_profits.append(max_profit)
+        max_drawdowns.append(max_drawdown)
+        total_returns.append(total_return)
+
+    return {
+        "iterations": iterations,
+        "stats": {
+            "max_profits": max_profits,
+            "max_drawdowns": max_drawdowns,
+            "total_returns": total_returns,
+        },
     }
-    return data
 
 if __name__ == "__main__":
     train_models()

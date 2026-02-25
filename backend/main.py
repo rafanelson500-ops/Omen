@@ -6,7 +6,8 @@ from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size,
 from helpers.broker import get_positions
 from helpers.logs import get_logs
 from helpers.data_handler import get_data
-from helpers.backtest import backtest, train_models
+import json
+from helpers.backtest import backtest, train_models, monte_carlo_backtest
 from bot.run import get_enriched_data, loop
 import threading
 import os
@@ -21,6 +22,11 @@ def backtest_json():
     data = backtest()
     return data.to_json(orient="records")
 
+def monte_carlo_json():
+    """Wrapper to return monte carlo results as JSON"""
+    result = monte_carlo_backtest(n_iterations=100)
+    return json.dumps(result)
+
 actions = {
     "set_bot_enabled": set_bot_enabled,
     "get_bot_enabled": get_bot_enabled,
@@ -33,6 +39,7 @@ actions = {
     "get_data": get_data,
     "get_enriched_data": get_enriched_data,
     "backtest": backtest_json,
+    "monte_carlo": monte_carlo_json,
     "train_models": train_models,
     "get_logs": get_logs,
 }

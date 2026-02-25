@@ -120,5 +120,15 @@ export const useBackend = () => {
     }
   }
 
-  return { connect, connected, sendMessage, request, loadLogs, updateDashboard, setUpdateAllCallback, trainModels, getBacktestData }
+  const getMonteCarloData = async (): Promise<any> => {
+    try {
+      const data = await request({ action: "monte_carlo" }, 9, 300000) // 5 minute timeout
+      return JSON.parse(data as string)
+    } catch (error) {
+      console.error('Failed to get Monte Carlo data:', error)
+      throw error
+    }
+  }
+
+  return { connect, connected, sendMessage, request, loadLogs, updateDashboard, setUpdateAllCallback, trainModels, getBacktestData, getMonteCarloData }
 }

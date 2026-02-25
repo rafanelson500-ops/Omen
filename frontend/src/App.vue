@@ -7,6 +7,7 @@ import ChartSection from "./components/ChartSection.vue"
 import Controls from "./components/Controls.vue"
 import LogsSection from "./components/LogsSection.vue"
 import BacktestSection from "./components/BacktestSection.vue"
+import MonteCarloSection from "./components/MonteCarloSection.vue"
 
 // --- State
 const botEnabled = ref(false)
@@ -23,8 +24,10 @@ const loadingLogs = ref(false)
 const loadingBacktest = ref(false)
 const cachedBacktestData = ref<any[]>([])
 const backtestDataLength = ref(0)
+const loadingMonteCarlo = ref(false)
+const monteCarloData = ref<any | null>(null)
 
-const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback, getBacktestData } = useBackend()
+const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback, getBacktestData, getMonteCarloData } = useBackend()
 const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, addWeightedSignalSeries, clearChart, initBacktestChart, addBacktestPriceSeries, addBacktestCumulativeSeries, addBacktestPositionSeries, clearBacktestChart, subscribeBacktestClick, setBacktestMarkers } = useChart()
 
 // --- Backtest slice-by-click state
@@ -132,6 +135,17 @@ const loadBacktestData = async () => {
     console.error('Failed to load backtest data:', error)
   } finally {
     loadingBacktest.value = false
+  }
+}
+
+const runMonteCarlo = async () => {
+  loadingMonteCarlo.value = true
+  try {
+    monteCarloData.value = await getMonteCarloData()
+  } catch (error) {
+    console.error('Failed to run Monte Carlo:', error)
+  } finally {
+    loadingMonteCarlo.value = false
   }
 }
 
@@ -307,6 +321,14 @@ onBeforeUnmount(() => {
         @reset="handleBacktestReset"
       />
     </section>
+
+    <section class="mc-container">
+      <MonteCarloSection
+        :loading="loadingMonteCarlo"
+        :monte-carlo-data="monteCarloData"
+        @run="runMonteCarlo"
+      />
+    </section>
   </div>
 </template>
 
@@ -370,5 +392,10 @@ onBeforeUnmount(() => {
   padding: 1.5rem;
   padding-top: 0;
   min-height: 600px;
+}
+
+.mc-container {
+  padding: 1.5rem;
+  padding-top: 0;
 }
 </style>
