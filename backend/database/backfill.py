@@ -13,7 +13,7 @@ DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # List never expires. Candles older than 1 month are dropped on each update.
-OHLCV_RETENTION_SECONDS = 30 * 24 * 3600  # 1 month
+OHLCV_RETENTION_SECONDS = 3 * 30 * 24 * 3600  # 1 month
 
 client = db.Historical(DATABENTO_API_KEY)
 redis_client = redis.from_url(REDIS_URL)
@@ -42,7 +42,7 @@ def backfill():
     cst = ZoneInfo("America/Chicago")
     today_cst = datetime.now(cst)
 
-    start_utc = today_cst.astimezone(ZoneInfo("UTC")) - timedelta(days=21)
+    start_utc = today_cst.astimezone(ZoneInfo("UTC")) - timedelta(days=100)
     end_utc = today_cst.astimezone(ZoneInfo("UTC")) - timedelta(hours=3)
 
     data = client.timeseries.get_range(

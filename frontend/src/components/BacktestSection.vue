@@ -1,39 +1,21 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 const chartContainer = ref<HTMLElement | null>(null)
 
-const props = defineProps<{
+defineProps<{
   loadingBacktest: boolean
   dataLength: number
+  selectMode: 'none' | 'start' | 'end'
+  rangeStartLabel: string
+  rangeEndLabel: string
 }>()
 
 const emit = defineEmits<{
   (e: 'load'): void
-  (e: 'rangeChange', start: number, end: number): void
+  (e: 'startSelect'): void
   (e: 'reset'): void
 }>()
-
-const rangeStart = ref(0)
-const rangeEnd = ref(0)
-
-watch(() => props.dataLength, (len) => {
-  rangeEnd.value = len
-})
-
-const applyRange = () => {
-  const s = Math.max(0, Math.min(rangeStart.value, props.dataLength - 1))
-  const e = Math.max(s + 1, Math.min(rangeEnd.value, props.dataLength))
-  rangeStart.value = s
-  rangeEnd.value = e
-  emit('rangeChange', s, e)
-}
-
-const resetRange = () => {
-  rangeStart.value = 0
-  rangeEnd.value = props.dataLength
-  emit('reset')
-}
 
 defineExpose({
   chartContainer
@@ -45,30 +27,25 @@ defineExpose({
     <div class="backtest-header">
       <h2 class="backtest-title">Backtest</h2>
       <div class="range-controls" v-if="dataLength > 0">
-        <label class="range-label">
-          Start
-          <input
-            type="number"
-            class="range-input"
-            v-model.number="rangeStart"
-            :min="0"
-            :max="dataLength - 1"
-            @keyup.enter="applyRange"
-          />
-        </label>
-        <label class="range-label">
-          End
-          <input
-            type="number"
-            class="range-input"
-            v-model.number="rangeEnd"
-            :min="1"
-            :max="dataLength"
-            @keyup.enter="applyRange"
-          />
-        </label>
-        <button class="range-button" @click="applyRange">Apply</button>
-        <button class="range-button reset-button" @click="resetRange">Reset</button>
+        <button
+          class="range-button select-button"
+          :class="{ active: selectMode !== 'none' }"
+          @click="emit('startSelect')"
+        >
+          <template v-if="selectMode === 'none'">
+            &#9986; Slice
+          </template>
+          <template v-else-if="selectMode === 'start'">
+            Click start&hellip;
+          </template>
+          <template v-else>
+            Click end&hellip;
+          </template>
+        </button>
+        <span class="range-badge" v-if="rangeStartLabel">
+          {{ rangeStartLabel }} &rarr; {{ rangeEndLabel || '…' }}
+        </span>
+        <button class="range-button reset-button" @click="emit('reset')">Reset</button>
       </div>
       <button 
         class="load-button"
@@ -78,7 +55,7 @@ defineExpose({
         {{ loadingBacktest ? 'Loading...' : 'Load Backtest' }}
       </button>
     </div>
-    <div ref="chartContainer" class="chart" />
+    <div ref="chartContainer" class="chart" :class="{ 'chart-selecting': selectMode !== 'none' }" />
   </section>
 </template>
 
@@ -119,30 +96,6 @@ defineExpose({
   gap: 0.5rem;
 }
 
-.range-label {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.range-input {
-  width: 70px;
-  padding: 0.3rem 0.5rem;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-family: inherit;
-}
-
-.range-input:focus {
-  outline: none;
-  border-color: var(--accent, #fbbf24);
-}
-
 .range-button {
   padding: 0.3rem 0.6rem;
   background: var(--surface);
@@ -152,11 +105,31 @@ defineExpose({
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s, border-color 0.2s;
 }
 
 .range-button:hover {
   background: var(--bg);
+}
+
+.select-button.active {
+  color: var(--accent, #fbbf24);
+  border-color: var(--accent, #fbbf24);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.range-badge {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  background: var(--bg);
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .reset-button {
@@ -193,5 +166,9 @@ defineExpose({
   flex: 1;
   min-height: 500px;
   width: 100%;
+}
+
+.chart-selecting {
+  cursor: crosshair;
 }
 </style>

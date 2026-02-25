@@ -1,9 +1,9 @@
 confidence_threshold: 0
-current_position: 1
-enabled: true
+current_position: 0
+enabled: false
 gbt_retrain_time: 00:00
 hmm_retrain_time: 00:00
-lots_size: 1
+lots_size: 2
 mode: prop
-session: ALL
-target: 6
+session: RTH
+target: 10

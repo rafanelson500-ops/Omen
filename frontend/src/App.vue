@@ -25,7 +25,14 @@ const cachedBacktestData = ref<any[]>([])
 const backtestDataLength = ref(0)
 
 const { connect, connected, sendMessage, request, loadLogs, updateDashboard: updateDashboardFromBackend, setUpdateAllCallback, getBacktestData } = useBackend()
-const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, addWeightedSignalSeries, clearChart, initBacktestChart, addBacktestPriceSeries, addBacktestCumulativeSeries, addBacktestPositionSeries, clearBacktestChart } = useChart()
+const { chart, initChart, addPriceSeries, addRegimeSeries, addValueAreaSeries, addChopSignalSeries, addTrendSignalSeries, addWeightedSignalSeries, clearChart, initBacktestChart, addBacktestPriceSeries, addBacktestCumulativeSeries, addBacktestPositionSeries, clearBacktestChart, subscribeBacktestClick, setBacktestMarkers } = useChart()
+
+// --- Backtest slice-by-click state
+const sliceSelectMode = ref<'none' | 'start' | 'end'>('none')
+const sliceStartIdx = ref<number | null>(null)
+const sliceEndIdx = ref<number | null>(null)
+const sliceStartLabel = ref('')
+const sliceEndLabel = ref('')
 
 const currentTime = ref("")
 let timeInterval: ReturnType<typeof setInterval> | null = null
@@ -143,8 +150,89 @@ const handleBacktestRangeChange = (start: number, end: number) => {
 }
 
 const handleBacktestReset = () => {
+  sliceSelectMode.value = 'none'
+  sliceStartIdx.value = null
+  sliceEndIdx.value = null
+  sliceStartLabel.value = ''
+  sliceEndLabel.value = ''
   if (cachedBacktestData.value.length === 0) return
   renderBacktestData(cachedBacktestData.value)
+  setBacktestMarkers([])
+}
+
+const startSliceSelect = () => {
+  if (sliceSelectMode.value !== 'none') {
+    // Cancel selection
+    sliceSelectMode.value = 'none'
+    sliceStartIdx.value = null
+    sliceEndIdx.value = null
+    sliceStartLabel.value = ''
+    sliceEndLabel.value = ''
+    setBacktestMarkers([])
+    return
+  }
+  sliceSelectMode.value = 'start'
+  sliceStartIdx.value = null
+  sliceEndIdx.value = null
+  sliceStartLabel.value = ''
+  sliceEndLabel.value = ''
+  setBacktestMarkers([])
+}
+
+const findDataIndex = (time: any): number => {
+  // time can be a number (unix timestamp) or a string
+  const data = cachedBacktestData.value
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].time === time) return i
+    if (data[i].time >= time) return i
+  }
+  return data.length - 1
+}
+
+const formatTimeLabel = (time: any): string => {
+  if (typeof time === 'number') {
+    const d = new Date(time * 1000)
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  return String(time)
+}
+
+const handleBacktestChartClick = (params: any) => {
+  if (sliceSelectMode.value === 'none') return
+  if (!params.time) return
+  const data = cachedBacktestData.value
+  if (data.length === 0) return
+
+  const idx = findDataIndex(params.time)
+
+  if (sliceSelectMode.value === 'start') {
+    sliceStartIdx.value = idx
+    sliceStartLabel.value = formatTimeLabel(params.time)
+    sliceSelectMode.value = 'end'
+    // Show a marker at the start point
+    setBacktestMarkers([
+      { time: data[idx].time, position: 'belowBar', color: '#fbbf24', shape: 'arrowUp', text: 'Start' }
+    ])
+  } else if (sliceSelectMode.value === 'end') {
+    let startIdx = sliceStartIdx.value!
+    let endIdx = idx
+    // Swap if clicked in wrong order
+    if (endIdx < startIdx) {
+      ;[startIdx, endIdx] = [endIdx, startIdx]
+      sliceStartIdx.value = startIdx
+      sliceStartLabel.value = formatTimeLabel(data[startIdx].time)
+    }
+    sliceEndIdx.value = endIdx
+    sliceEndLabel.value = formatTimeLabel(params.time)
+    sliceSelectMode.value = 'none'
+    // Show markers at both points
+    setBacktestMarkers([
+      { time: data[startIdx].time, position: 'belowBar', color: '#fbbf24', shape: 'arrowUp', text: 'Start' },
+      { time: data[endIdx].time, position: 'belowBar', color: '#fbbf24', shape: 'arrowUp', text: 'End' },
+    ])
+    // Apply the slice
+    handleBacktestRangeChange(startIdx, endIdx + 1)
+  }
 }
 
 // Set up the update_all callback after updateDashboard is defined
@@ -158,11 +246,10 @@ onMounted(async() => {
   }
   if (backtestSectionRef.value?.chartContainer) {
     initBacktestChart(backtestSectionRef.value.chartContainer)
+    subscribeBacktestClick(handleBacktestChartClick)
   }
   updateDashboard()
   getEnrichedData()
-  loadBacktestData()
-
   updateTime()
   timeInterval = setInterval(updateTime, 100)
 })
@@ -212,8 +299,11 @@ onBeforeUnmount(() => {
         ref="backtestSectionRef"
         :loading-backtest="loadingBacktest"
         :data-length="backtestDataLength"
+        :select-mode="sliceSelectMode"
+        :range-start-label="sliceStartLabel"
+        :range-end-label="sliceEndLabel"
         @load="loadBacktestData"
-        @range-change="handleBacktestRangeChange"
+        @start-select="startSliceSelect"
         @reset="handleBacktestReset"
       />
     </section>

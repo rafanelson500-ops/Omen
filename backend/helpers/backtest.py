@@ -25,7 +25,7 @@ def train_models():
         # Get all available data, then use 1/5 for training
         all_data = get_data(data = config["session"], jsonify = False, include_volume = True, all_data = True)
         # Take first 1/5 of data for training (maintains chronological order)
-        data = all_data.iloc[:len(all_data) // 2]
+        data = all_data.iloc[0:len(all_data) // 5]
         data = add_regime_features(data)
         data = add_technical_features(data)
         data = add_prediction_features_chop(data)
@@ -45,6 +45,7 @@ def backtest():
     config = load_config()
 
     data = get_data(config["session"], jsonify = False, include_volume = True, all_data = True)
+    print(data.head())
 
     # Featurize data
     data = add_regime_features(data)
@@ -55,7 +56,7 @@ def backtest():
     
     # Drop all rows with NaN except in 'forward_return' and 'target'
     cols_to_check = [c for c in data.columns if c not in ["forward_return", "target"]]
-    data = data.dropna(subset=cols_to_check).iloc[-len(data)//2:]
+    data = data.dropna(subset=cols_to_check).iloc[len(data)//5:]
 
 
     # Run HMM model to get probabilities of each regime
@@ -90,7 +91,7 @@ def backtest():
     # Simulated stop loss: for each contiguous position signal, track cumulative
     # PnL from entry. If it drops to or below -stop_loss_threshold, zero out the
     # remaining candles of that signal.
-    stop_loss_threshold = 15
+    stop_loss_threshold = 10
     positions = data['position'].values.copy()
     price_changes = data['price_change'].values
     i = 0
@@ -133,6 +134,21 @@ def backtest():
     data['cum_buy_hold'] = data['buy_hold_pnl'].cumsum()
     
     #Return 2nd half of data
+    return data
+
+def monte_carlo_backtest():
+    config = load_config()
+    data = get_data(config["session"], jsonify = False, include_volume = True, all_data = True)
+    data = add_regime_features(data)
+    data = add_technical_features(data)
+    data = add_prediction_features_chop(data)
+    data = add_prediction_features_trend(data)
+    data = add_targets(data)
+
+    results = {
+        "iterations": [],
+        "average_return"
+    }
     return data
 
 if __name__ == "__main__":

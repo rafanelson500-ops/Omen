@@ -1,11 +1,12 @@
 import { ref } from "vue"
-import { createChart, ColorType, type IChartApi, type ISeriesApi, CandlestickSeries, LineSeries, BaselineSeries, CrosshairMode } from "lightweight-charts"
+import { createChart, createSeriesMarkers, ColorType, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type MouseEventParams, CandlestickSeries, LineSeries, BaselineSeries, CrosshairMode } from "lightweight-charts"
 
 export const useChart = () => {
   const chart = ref<IChartApi | null>(null)
   const series = ref<ISeriesApi<any>[]>([])
   const backtestChart = ref<IChartApi | null>(null)
   const backtestSeries = ref<ISeriesApi<any>[]>([])
+  let backtestMarkersPlugin: ISeriesMarkersPluginApi<any> | null = null
 
   // Match App.vue dark theme: --surface, --text, --muted, --border, --on (green), accent
   const chartTheme = {
@@ -215,8 +216,8 @@ export const useChart = () => {
     lineWidth: 2 as const,
     priceFormat: {
       type: 'price' as const,
-      precision: 4,
-      minMove: 0.0001,
+      precision: 2,
+      minMove: 0.25,
     },
   }
 
@@ -275,10 +276,30 @@ export const useChart = () => {
   }
 
   const clearBacktestChart = () => {
+    if (backtestMarkersPlugin) {
+      backtestMarkersPlugin.detach()
+      backtestMarkersPlugin = null
+    }
     backtestSeries.value.forEach(series => {
       backtestChart.value?.removeSeries(series)
     })
     backtestSeries.value = []
+  }
+
+  const subscribeBacktestClick = (callback: (params: MouseEventParams) => void) => {
+    backtestChart.value?.subscribeClick(callback)
+  }
+
+  const setBacktestMarkers = (markers: any[]) => {
+    // If we already have a markers plugin, just update its markers
+    if (backtestMarkersPlugin) {
+      backtestMarkersPlugin.setMarkers(markers)
+      return
+    }
+    // Create the plugin on the first backtest series (price candlestick)
+    if (backtestSeries.value.length > 0 && markers.length > 0) {
+      backtestMarkersPlugin = createSeriesMarkers(backtestSeries.value[0], markers)
+    }
   }
 
   return { 
@@ -296,6 +317,8 @@ export const useChart = () => {
     addBacktestPriceSeries,
     addBacktestCumulativeSeries,
     addBacktestPositionSeries,
-    clearBacktestChart
+    clearBacktestChart,
+    subscribeBacktestClick,
+    setBacktestMarkers
   }
 }
