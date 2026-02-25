@@ -195,7 +195,7 @@ const fmt = (v: number) => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)
       <!-- Loading overlay -->
       <div v-if="loading" class="chart-overlay">
         <div class="spinner" />
-        <span class="loading-text">Running 100 Monte Carlo simulations…</span>
+        <span class="loading-text">Running 1000 Monte Carlo simulations…</span>
       </div>
 
       <!-- Placeholder when no data yet -->

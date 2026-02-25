@@ -24,7 +24,7 @@ def backtest_json():
 
 def monte_carlo_json():
     """Wrapper to return monte carlo results as JSON"""
-    result = monte_carlo_backtest(n_iterations=100)
+    result = monte_carlo_backtest(250)
     return json.dumps(result)
 
 actions = {

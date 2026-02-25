@@ -135,7 +135,7 @@ def backtest():
     #Return 2nd half of data
     return data
 
-def monte_carlo_backtest(n_iterations=100):
+def monte_carlo_backtest(n_iterations=1000):
     config = load_config()
 
     data = get_data(config["session"], jsonify = False, include_volume = True, all_data = True)

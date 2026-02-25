@@ -85,6 +85,8 @@ def add_prediction_features_chop(df):
     df['wick_ratio'] = (df['upper_wick'] - df['lower_wick']) / (df['high'] - df['low'] + 1e-6)
     df['persistence_5'] = df['dir'].rolling(5).sum() / 5
     df['stretch_3'] = (df['close'] - df['close'].shift(3)) / df['atr']
+    df['atr_ratio_5'] = df['atr'] / df['atr'].rolling(5).mean()
+    df['range_compression'] = (df['high'] - df['low']) / df['atr'].rolling(10).mean()
     return df
 
 def add_prediction_features_trend(df):
