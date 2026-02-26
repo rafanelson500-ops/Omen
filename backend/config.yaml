@@ -1,9 +1,0 @@
-confidence_threshold: 0
-current_position: 5
-enabled: false
-gbt_retrain_time: 00:00
-hmm_retrain_time: 00:00
-lots_size: 5
-mode: paper
-session: RTH
-target: 10

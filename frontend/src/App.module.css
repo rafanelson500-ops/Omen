@@ -1,0 +1,13 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  padding: 16px;
+  gap: 16px;
+}
+
+.mainChart {
+  flex: 1;
+  min-height: 0;
+}

@@ -1,87 +1,31 @@
-from flask import Flask, jsonify
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
-from helpers.config_handler import load_setting, set_setting, load_config
-from helpers.bot_handler import set_bot_enabled, get_bot_enabled, set_lots_size, set_session, set_confidence_threshold, set_mode
-from helpers.broker import get_positions
-from helpers.logs import get_logs
-from helpers.data_handler import get_data
-import json
-from helpers.backtest import backtest, train_models, monte_carlo_backtest
-from bot.run import get_enriched_data, loop
-import threading
 import os
+import dotenv
+from data_aggregator import DataAggregator
+import time
+from flask import Flask
+from flask_socketio import SocketIO
+from options_handler import OptionsHandler
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, cors_allowed_origins="*")
-CORS(app, origins="*")
-
-def backtest_json():
-    """Wrapper to return backtest results as JSON"""
-    data = backtest()
-    return data.to_json(orient="records")
-
-def monte_carlo_json():
-    """Wrapper to return monte carlo results as JSON"""
-    result = monte_carlo_backtest(250)
-    return json.dumps(result)
-
-actions = {
-    "set_bot_enabled": set_bot_enabled,
-    "get_bot_enabled": get_bot_enabled,
-    "set_session": set_session,
-    "get_all": load_config,
-    "set_lots_size": set_lots_size,
-    "set_confidence_threshold": set_confidence_threshold,
-    "set_mode": set_mode,
-    "get_current_position": lambda: {"current_position": get_positions()},
-    "get_data": get_data,
-    "get_enriched_data": get_enriched_data,
-    "backtest": backtest_json,
-    "monte_carlo": monte_carlo_json,
-    "train_models": train_models,
-    "get_logs": get_logs,
-}
-
-@app.route('/health')
-def health():
-    return "OK"
+socketio = SocketIO(app)
+socketio.init_app(app, cors_allowed_origins="*", async_mode='threading')
+dotenv.load_dotenv()
 
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
-    emit('message', {'data': 'Connected to server', 'id': 0})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
 
 @socketio.on('message')
-def handle_message(data):
-    print("Message received: ", data)
-    if 'action' in data:
-        if data['action'] in actions:
-            response = None
-            if "data" in data:
-                response = actions[data['action']](data['data'])
-            else:
-                response = actions[data['action']]()
-            if 'id' in data:
-                emit('message', {'data': response, 'id': data['id']})
-            if 'update_all' in data and data['update_all']:
-                print(f"Broadcasting update_all to all clients after {data['action']}")
-                socketio.emit('message', {'data': 'update_all', 'id': -1})
-        else:
-            print("Unknown action: ", data['action'])
-    else:
-        print("Unknown message received: ", data)
+def handle_message(msg):
+    print(msg)
 
-if __name__ == '__main__':
-    # Listen on all interfaces (0.0.0.0) to allow external access
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        # This is the reloader process, skip thread creation
-        pass
-    else:
-        # This is the main process
-        thread = threading.Thread(target=loop)
-        thread.daemon = True
-        thread.start()
-    socketio.run(app, debug=True, host='0.0.0.0', port=8000)
-
+if __name__ == "__main__":
+    options_handler = OptionsHandler()
+    options_handler.get_options()
+    # data_aggregator = DataAggregator()
+    # data_aggregator.start(app, socketio)
+    # socketio.run(app, host='0.0.0.0', port=8000, allow_unsafe_werkzeug=True)

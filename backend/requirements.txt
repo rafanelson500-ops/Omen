@@ -8,3 +8,11 @@ dotenv
 redis
 hmmlearn
 numba
+pathway
+scipy
+pandas
+scipy
+fastapi
+pydantic
+streamlit
+uvicorn
