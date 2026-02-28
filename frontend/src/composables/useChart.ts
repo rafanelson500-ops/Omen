@@ -1,10 +1,15 @@
 import {
   createChart,
   LineSeries,
+  BaselineSeries,
   type IChartApi,
   type ISeriesApi,
   type LineData,
   type Time,
+  CandlestickSeries,
+  type CandlestickData,
+  HistogramSeries,
+  type HistogramData,
 } from 'lightweight-charts'
 
 // Databento raw prices are fixed-point integers scaled by 1e9
@@ -19,12 +24,20 @@ export interface RawCandle {
   buy_vol: number
   sell_vol: number
   delta: number
+  gravity: number
+  delta_gravity: number
+  average_gravity: number
   price_levels: Record<number, [number, number]>
+  ha_open: number
+  ha_high: number
+  ha_low: number
+  ha_close: number
 }
 
 export const useChart = () => {
-  let series: ISeriesApi<'Line'> | null = null
-
+  let series: ISeriesApi<any>[] = []
+  let priceSeries: ISeriesApi<'Candlestick'> | null = null
+  let haSeries: ISeriesApi<'Candlestick'> | null = null
   const initChart = (container: HTMLDivElement): IChartApi => {
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -51,27 +64,54 @@ export const useChart = () => {
       },
     })
 
-    series = chart.addSeries(LineSeries)
-
     return chart
   }
 
-  const toChartData = (raw: RawCandle): LineData<Time> => ({
+  const clearChart = (chart: IChartApi) => {
+    if (!chart) return
+    for (const s of series) {
+      chart?.removeSeries(s)
+    }
+    series = []
+    priceSeries = chart.addSeries(CandlestickSeries)
+    haSeries = chart.addSeries(CandlestickSeries, { upColor: '#34d399', downColor: '#ef4444' }, 1)
+    series.push(priceSeries, haSeries)
+  }
+
+
+  const hydrateChart = (data: any) => {
+    for (const candle of data) {
+      upsertCandle(candle)
+    }
+  }
+
+  const toPriceChartData = (raw: RawCandle): CandlestickData<Time> => ({
     time: raw.second as Time,
-    value: raw.close / PRICE_SCALE,
+    open: raw.open / PRICE_SCALE,
+    high: raw.high / PRICE_SCALE,
+    low: raw.low / PRICE_SCALE,
+    close: raw.close / PRICE_SCALE,
   })
 
+  const toHaChartData = (raw: RawCandle): CandlestickData<Time> => ({
+    time: raw.second as Time,
+    open: raw.ha_open / PRICE_SCALE,
+    high: raw.ha_high / PRICE_SCALE,
+    low: raw.ha_low / PRICE_SCALE,
+    close: raw.ha_close / PRICE_SCALE,
+  })
   // Upserts the candle at its timestamp (adds new or updates existing)
   const upsertCandle = (raw: RawCandle) => {
-    if (!series) return
-    series.update(toChartData(raw))
+    if (!priceSeries) return
+    priceSeries.update(toPriceChartData(raw))
+    haSeries?.update(toHaChartData(raw))
   }
 
   // Maps a real price (in dollars) to a canvas y-coordinate (logical px)
   const priceToCoord = (price: number): number | null => {
-    if (!series) return null
-    return series.priceToCoordinate(price) ?? null
+    if (!priceSeries) return null
+    return priceSeries.priceToCoordinate(price) ?? null
   }
 
-  return { initChart, upsertCandle, priceToCoord }
+  return { initChart, upsertCandle, priceToCoord, hydrateChart, clearChart }
 }

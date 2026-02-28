@@ -6,6 +6,11 @@ type ProfileMap = Map<number, [number, number]>
 export const useVolumeProfile = () => {
   const profileMap: ProfileMap = new Map()
 
+  // Clear all accumulated volume profile data
+  const clearProfile = () => {
+    profileMap.clear()
+  }
+
   // Accumulate price_levels from a finalized candle
   const addCandle = (candle: RawCandle) => {
     for (const [priceStr, [buy, sell]] of Object.entries(candle.price_levels)) {
@@ -55,8 +60,8 @@ export const useVolumeProfile = () => {
     const sortedPrices = entries.map(([p]) => p).sort((a, b) => a - b)
     let tickH = 3
     if (sortedPrices.length >= 2) {
-      const y0 = priceToCoord(sortedPrices[0] / PRICE_SCALE)
-      const y1 = priceToCoord(sortedPrices[1] / PRICE_SCALE)
+      const y0 = priceToCoord(sortedPrices[0] as number / PRICE_SCALE)
+      const y1 = priceToCoord(sortedPrices[1] as number / PRICE_SCALE)
       if (y0 !== null && y1 !== null) {
         tickH = Math.max(1, Math.abs(y1 - y0) - 1)
       }
@@ -88,5 +93,5 @@ export const useVolumeProfile = () => {
     ctx.restore()
   }
 
-  return { addCandle, draw }
+  return { addCandle, draw, clearProfile }
 }

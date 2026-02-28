@@ -10,7 +10,8 @@ const props = defineProps<{ backendUrl: string }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const connected = ref(false)
-
+const mode = ref("live")
+const availableData = ref([])
 // Canvas is created programmatically *after* initChart so it sits on top
 // of lightweight-charts' own canvas elements in the DOM stacking order.
 let vpCanvas: HTMLCanvasElement | null = null
@@ -18,8 +19,8 @@ let chart: IChartApi | null = null
 let socket: Socket | null = null
 let unsubscribeRangeChange: (() => void) | null = null
 
-const { initChart, upsertCandle, priceToCoord } = useChart()
-const { addCandle, draw } = useVolumeProfile()
+const { initChart, upsertCandle, priceToCoord, hydrateChart, clearChart } = useChart()
+const { addCandle, draw, clearProfile } = useVolumeProfile()
 
 // Match canvas pixel dimensions to the container (DPR-aware)
 const sizeCanvas = () => {
@@ -50,6 +51,10 @@ const handleResize = () => {
   drawVP()
 }
 
+const handleModeChange = () => {
+  socket?.emit('mode_change', mode.value)
+}
+
 onMounted(() => {
   const container = containerRef.value
   if (container) {
@@ -57,7 +62,7 @@ onMounted(() => {
 
     // Append canvas AFTER the chart so it is on top in z/DOM order
     vpCanvas = document.createElement('canvas')
-    vpCanvas.className = styles.vpCanvas
+    vpCanvas.className = styles.vpCanvas as string
     container.appendChild(vpCanvas)
 
     sizeCanvas()
@@ -79,10 +84,27 @@ onMounted(() => {
     connected.value = false
   })
 
-  socket.on('candle_update', (candle: RawCandle) => {
-    upsertCandle(candle)
-    addCandle(candle)
+  socket.on('available_data', (data: any) => {
+    availableData.value = data.sort()
+  })
+
+  socket.on('hydration_data', (data: any) => {
+    console.log(data)
+    clearChart(chart as IChartApi)
+    clearProfile()
+    hydrateChart(data)
+    for (const candle of data) {
+      addCandle(candle)
+    }
     drawVP()
+  })
+
+  socket.on('candle_update', (candle: RawCandle) => {
+    if (mode.value === "live") {
+      upsertCandle(candle)
+      addCandle(candle)
+      drawVP()
+    }
   })
 
   window.addEventListener('resize', handleResize)
@@ -103,6 +125,10 @@ onUnmounted(() => {
       <span :class="styles.symbol">ES.FUT</span>
       <span :class="styles.interval">1s</span>
       <span :class="[styles.statusDot, !connected && styles.statusDotOff]" />
+      <select v-model="mode" @change="handleModeChange">
+        <option value="live">Live</option>
+        <option v-for="data in availableData" :value="data">{{ data }}</option>
+      </select>
     </div>
     <!-- vpCanvas is appended here programmatically after chart init -->
     <div ref="containerRef" :class="styles.chart" />
