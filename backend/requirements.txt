@@ -16,3 +16,4 @@ fastapi
 pydantic
 streamlit
 uvicorn
+crewai
