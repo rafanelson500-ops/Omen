@@ -5,6 +5,7 @@ import time
 from flask import Flask
 from flask_socketio import SocketIO
 from options_handler import OptionsHandler
+from backtester import Backtester
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -14,6 +15,7 @@ dotenv.load_dotenv()
 
 options_handler = OptionsHandler()
 data_aggregator = DataAggregator()
+backtester = Backtester()
 
 @socketio.on('connect')
 def handle_connect():
@@ -39,6 +41,13 @@ def handle_mode_change(mode):
         data = data_aggregator.load_historical_candles(f"./opens/{mode}.csv")
         print(data)
         socketio.emit('hydration_data', data.to_dict(orient='records'))
+
+@socketio.on('backtest')
+def handle_backtest(mode):
+    print(f"Backtesting {mode}")
+    data = data_aggregator.load_historical_candles(f"./opens/{mode}.csv")
+    backtester.backtest(data)
+    socketio.emit('hydration_data', backtester.backtest(data).to_dict(orient='records'))
 
 if __name__ == "__main__":
     data_aggregator.start(app, socketio)

@@ -55,6 +55,10 @@ const handleModeChange = () => {
   socket?.emit('mode_change', mode.value)
 }
 
+const handleBacktest = () => {
+  socket?.emit('backtest', mode.value)
+}
+
 onMounted(() => {
   const container = containerRef.value
   if (container) {
@@ -129,6 +133,7 @@ onUnmounted(() => {
         <option value="live">Live</option>
         <option v-for="data in availableData" :value="data">{{ data }}</option>
       </select>
+      <button @click="handleBacktest">Backtest</button>
     </div>
     <!-- vpCanvas is appended here programmatically after chart init -->
     <div ref="containerRef" :class="styles.chart" />

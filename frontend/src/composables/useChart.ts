@@ -38,6 +38,8 @@ export const useChart = () => {
   let series: ISeriesApi<any>[] = []
   let priceSeries: ISeriesApi<'Candlestick'> | null = null
   let haSeries: ISeriesApi<'Candlestick'> | null = null
+  let returnSeries: ISeriesApi<'Line'> | null = null
+  let benchmarkSeries: ISeriesApi<'Line'> | null = null
   const initChart = (container: HTMLDivElement): IChartApi => {
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -75,7 +77,9 @@ export const useChart = () => {
     series = []
     priceSeries = chart.addSeries(CandlestickSeries)
     haSeries = chart.addSeries(CandlestickSeries, { upColor: '#34d399', downColor: '#ef4444' }, 1)
-    series.push(priceSeries, haSeries)
+    returnSeries = chart.addSeries(LineSeries, { color: '#fbbf24' }, 2)
+    benchmarkSeries = chart.addSeries(LineSeries, { color: '#e2e8f0' }, 2)
+    series.push(priceSeries, haSeries, returnSeries, benchmarkSeries)
   }
 
 
@@ -84,6 +88,16 @@ export const useChart = () => {
       upsertCandle(candle)
     }
   }
+
+  const toReturnChartData = (data: any): LineData<Time> => ({
+    time: data.second as Time,
+    value: data.strategy_returns / PRICE_SCALE,
+  })
+
+  const toBenchmarkChartData = (data: any): LineData<Time> => ({
+    time: data.second as Time,
+    value: data.benchmark_returns / PRICE_SCALE,
+  })
 
   const toPriceChartData = (raw: RawCandle): CandlestickData<Time> => ({
     time: raw.second as Time,
@@ -105,6 +119,10 @@ export const useChart = () => {
     if (!priceSeries) return
     priceSeries.update(toPriceChartData(raw))
     haSeries?.update(toHaChartData(raw))
+    if ("strategy_returns" in raw) {
+      returnSeries?.update(toReturnChartData(raw))
+      benchmarkSeries?.update(toBenchmarkChartData(raw))
+    }
   }
 
   // Maps a real price (in dollars) to a canvas y-coordinate (logical px)
