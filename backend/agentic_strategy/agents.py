@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process, LLM
-from tools import place_trade, get_data, read_options_chain, get_order_flow_data, get_regime_data
+from agentic_strategy.tools import place_trade, get_data, read_options_chain, get_order_flow_data, get_regime_data
 # ── Load environment ──────────────────────────────────────────────────────────
 load_dotenv()
 
@@ -13,7 +13,7 @@ if not api_key or api_key == "your-openai-api-key-here":
     )
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
-llm = LLM(model="gpt-4o", api_key=api_key)
+llm = LLM(model="gpt-5.2", api_key=api_key)
 
 agents = [
     Agent(

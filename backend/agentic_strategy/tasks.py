@@ -1,5 +1,5 @@
 from crewai import Task
-from agents import agents
+from agentic_strategy.agents import agents
 
 contextualizer_task = Task(
     description="You will get historical OHLCV for 10 hours and you will profide important levels, general price history, and most importantly CURRENT PRICE.",
@@ -29,7 +29,7 @@ order_flow_analyst_task = Task(
 
 trade_strategist_task = Task(
     description="Use the Options Analyst's report and the Regime Analyst's report and the Order Flow Analyst's report to make a decision on what position to take and what targets to aim for. You should include side, position size, and targets.",
-    expected_output="Either a SINGLE tool call to the place_trade tool or a PASS decision. Very 2 sentence short rational response.",
+    expected_output="The tool call result with no extra text OR the exact text 'PASS' only if you are not taking a trade",
     agent=agents[4],
     context=[contextualizer_task, options_analyst_task, regime_analyst_task, order_flow_analyst_task],
 )

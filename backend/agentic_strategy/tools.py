@@ -36,7 +36,7 @@ def place_trade(side: Literal["BUY", "SELL"], entry_limit: float, size: Literal[
         stop_loss: The stop loss for the trade
         take_profit: The take profit for the trade
     Returns:
-        A success message
+        A dictionary with the side, entry_limit, size, stop_loss, and take_profit
     """
     def round_to_tick(x):
         return round(x * 4) / 4
@@ -45,14 +45,7 @@ def place_trade(side: Literal["BUY", "SELL"], entry_limit: float, size: Literal[
     stop_loss = round_to_tick(stop_loss)
     take_profit = round_to_tick(take_profit)
 
-    print("Placing trade...")
-    print(f"Side: {side}")
-    print(f"Size: {size}")
-    print(f"Entry Limit: {entry_limit}")
-    print(f"Stop Loss: {stop_loss}")
-    print(f"Take Profit: {take_profit}")
-    print("Trade placed successfully")
-    return "Trade placed successfully"
+    return {"side": side, "entry_limit": entry_limit, "size": size, "stop_loss": stop_loss, "take_profit": take_profit}
 
 @tool("read_options_chain")
 def read_options_chain() -> str:
@@ -96,8 +89,8 @@ def get_data():
         attemps -= 1
         time.sleep(0.1)
 
-    #Resample to 5m (bins start when minute % 5 == 0: 10:00, 10:05, 10:10, ...)
-    df = df.resample("5min").agg(
+    # Resample to 5m (bins start when minute % 5 == 0: 10:00, 10:05, 10:10, ...)
+    completed = df.resample("5min").agg(
         open=("open", "first"),
         high=("high", "max"),
         low=("low", "min"),
@@ -105,10 +98,25 @@ def get_data():
         volume=("volume", "sum"),
     ).dropna(how="all")
     # One row per 5m bin: index is bin start time; drop duplicate index rows so each candle has unique time
-    df = df[~df.index.duplicated(keep="first")]
-    df["time"] = (df.index.astype("int64") // 10**6).astype("int64")  # nanoseconds -> milliseconds
+    completed = completed[~completed.index.duplicated(keep="first")]
+
+    # Include the currently-forming 5m candle (raw ticks after the last completed bin)
+    if not completed.empty:
+        forming_start = completed.index[-1] + pd.Timedelta(minutes=5)
+        forming_ticks = df[df.index >= forming_start]
+        if not forming_ticks.empty:
+            partial = pd.DataFrame([{
+                "open":   forming_ticks["open"].iloc[0],
+                "high":   forming_ticks["high"].max(),
+                "low":    forming_ticks["low"].min(),
+                "close":  forming_ticks["close"].iloc[-1],
+                "volume": forming_ticks["volume"].sum(),
+            }], index=[forming_start])
+            completed = pd.concat([completed, partial])
+
+    completed["time"] = (completed.index.astype("int64") // 10**6).astype("int64")  # nanoseconds -> milliseconds
     cols = ["time", "open", "high", "low", "close", "volume"]
-    cache_df = df[cols].dropna()
+    cache_df = completed[cols].dropna()
     return cache_df.iloc[-120:]
 
 @tool("get_regime_data")
