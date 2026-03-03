@@ -107,12 +107,14 @@ def _calculate_value_area(prices_sorted, vols_sorted, value_area_pct):
 
 def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7):
     """
-    Adds VAL, VAH, and POC columns to a candle dataframe using rolling volume profile.
+    Adds VAL, VAH, and POC columns to a candle dataframe using volume profile.
+    If 'new_session' column exists, resets volume profile at each session (like VWAP).
+    Otherwise, uses rolling window approach.
     Highly optimized version using numba JIT compilation.
 
     Parameters:
         df (pd.DataFrame): Must contain columns ["Low","High","Volume"]
-        lookback (int): Number of candles in rolling window
+        lookback (int): Number of candles in rolling window (used only if 'new_session' not present)
         price_step (float): Price bin size
         value_area_pct (float): % of volume to include in value area (default 70%)
 
@@ -135,39 +137,93 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
     vah_results = np.full(len(df), np.nan, dtype=np.float64)
     poc_results = np.full(len(df), np.nan, dtype=np.float64)
     
-    # Calculate volume profile for every candle to avoid look-ahead bias
-    # This ensures each candle's VAL/VAH/POC is based only on the lookback window ending at that candle
-    for i in range(lookback, len(df)):
-        start_idx = i - lookback
-        window_lows = lows[start_idx:i]
-        window_highs = highs[start_idx:i]
-        window_volumes = volumes[start_idx:i]
+    # Check if new_session column exists - if so, use session-based calculation
+    if "new_session" in df.columns:
+        # Create session IDs that increment at each new session (same as VWAP)
+        session_id = df["new_session"].cumsum().values
         
-        # Filter out zero-volume candles
-        valid_mask = window_volumes > 0
-        if not np.any(valid_mask):
-            continue
+        # Pre-compute session start indices for efficiency
+        session_starts = {}
+        for idx, sid in enumerate(session_id):
+            if sid not in session_starts:
+                session_starts[sid] = idx
+        
+        # Calculate volume profile for every candle within its session
+        # For each candle, use all data from the start of its session up to that candle
+        for i in range(len(df)):
+            current_session = session_id[i]
             
-        window_lows = window_lows[valid_mask]
-        window_highs = window_highs[valid_mask]
-        window_volumes = window_volumes[valid_mask]
-        
-        # Compute volume profile using numba
-        prices_sorted, vols_sorted = _compute_volume_profile_numba(
-            window_lows, window_highs, window_volumes, price_step
-        )
-        
-        if len(prices_sorted) == 0:
-            continue
-        
-        # Calculate value area
-        val, vah = _calculate_value_area(prices_sorted, vols_sorted, value_area_pct)
-        val_results[i] = val
-        vah_results[i] = vah
-        
-        # Calculate POC (Point of Control) - price with highest volume
-        # prices_sorted is already sorted by volume descending, so first element is POC
-        poc_results[i] = prices_sorted[0]
+            # Get the start of the current session
+            start_idx = session_starts[current_session]
+            end_idx = i + 1  # +1 because slicing is exclusive
+            
+            if end_idx <= start_idx:
+                continue
+            
+            window_lows = lows[start_idx:end_idx]
+            window_highs = highs[start_idx:end_idx]
+            window_volumes = volumes[start_idx:end_idx]
+            
+            # Filter out zero-volume candles
+            valid_mask = window_volumes > 0
+            if not np.any(valid_mask):
+                continue
+                
+            window_lows = window_lows[valid_mask]
+            window_highs = window_highs[valid_mask]
+            window_volumes = window_volumes[valid_mask]
+            
+            # Compute volume profile using numba
+            prices_sorted, vols_sorted = _compute_volume_profile_numba(
+                window_lows, window_highs, window_volumes, price_step
+            )
+            
+            if len(prices_sorted) == 0:
+                continue
+            
+            # Calculate value area
+            val, vah = _calculate_value_area(prices_sorted, vols_sorted, value_area_pct)
+            val_results[i] = val
+            vah_results[i] = vah
+            
+            # Calculate POC (Point of Control) - price with highest volume
+            # prices_sorted is already sorted by volume descending, so first element is POC
+            poc_results[i] = prices_sorted[0]
+    else:
+        # Fall back to original rolling window approach
+        # Calculate volume profile for every candle to avoid look-ahead bias
+        # This ensures each candle's VAL/VAH/POC is based only on the lookback window ending at that candle
+        for i in range(lookback, len(df)):
+            start_idx = i - lookback
+            window_lows = lows[start_idx:i]
+            window_highs = highs[start_idx:i]
+            window_volumes = volumes[start_idx:i]
+            
+            # Filter out zero-volume candles
+            valid_mask = window_volumes > 0
+            if not np.any(valid_mask):
+                continue
+                
+            window_lows = window_lows[valid_mask]
+            window_highs = window_highs[valid_mask]
+            window_volumes = window_volumes[valid_mask]
+            
+            # Compute volume profile using numba
+            prices_sorted, vols_sorted = _compute_volume_profile_numba(
+                window_lows, window_highs, window_volumes, price_step
+            )
+            
+            if len(prices_sorted) == 0:
+                continue
+            
+            # Calculate value area
+            val, vah = _calculate_value_area(prices_sorted, vols_sorted, value_area_pct)
+            val_results[i] = val
+            vah_results[i] = vah
+            
+            # Calculate POC (Point of Control) - price with highest volume
+            # prices_sorted is already sorted by volume descending, so first element is POC
+            poc_results[i] = prices_sorted[0]
     
     # Assign results back to dataframe (much faster than iloc)
     df["val"] = val_results

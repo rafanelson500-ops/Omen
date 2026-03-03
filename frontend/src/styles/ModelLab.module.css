@@ -125,9 +125,18 @@
   padding: 0.9rem 1rem;
 }
 
+/* ── Chart and features row ─────────────────────────── */
+.chartFeaturesRow {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  align-items: flex-start;
+}
+
 /* ── Chart placeholder ───────────────────────────────── */
 .chartContainer {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   aspect-ratio: 16/6;
   background: var(--bg);
   border: 1px dashed var(--border);
@@ -315,13 +324,46 @@
   color: var(--text);
 }
 
+/* ── Features and controls row (for HMM/GBT sections) ── */
+.featuresControlsRow {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  align-items: flex-start;
+}
+
 /* ── Feature selection block ─────────────────────────── */
 .featureBlock {
-  width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+}
+
+/* Chart section feature block - fixed width */
+.chartFeaturesRow .featureBlock {
+  width: 320px;
+  min-width: 280px;
+  flex-shrink: 0;
+}
+
+/* HMM/GBT section feature blocks - flexible width */
+.featuresControlsRow .featureBlock {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Controls column (for HMM/GBT sections) ─────────── */
+.controlsColumn {
+  width: 280px;
+  min-width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .featureBlockHeader {
@@ -448,10 +490,94 @@
   font-weight: 500;
   color: var(--muted);
   transition: color 0.15s;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .featureItemChecked .featureLabel {
   color: var(--text);
+}
+
+/* ── Feature list (for chart features section) ───────── */
+.featureList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 400px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  flex: 1;
+}
+
+.featureList::-webkit-scrollbar {
+  width: 4px;
+}
+
+.featureList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.featureList::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.featureList::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+.featureRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+
+.featureRow:last-child {
+  border-bottom: none;
+}
+
+.featureRow:hover {
+  background: var(--surface-hover);
+}
+
+.featureActions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.featureBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 0.85rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.featureBtn:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.featureBtn:active {
+  transform: scale(0.95);
 }
 
 /* ── Spinner ─────────────────────────────────────────── */
