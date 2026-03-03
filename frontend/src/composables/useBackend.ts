@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client'
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 
 let BACKEND_URL = import.meta.env.VITE_API_URL
 if (window.location.hostname === '192.168.1.149') {
@@ -15,27 +15,21 @@ socket.on('connection_status', (status: boolean) => {
     connectionStatus.value = status
 })
 
-export interface AgentReport {
-    agent: string
-    report: string
-}
 
-const agentReports = ref<AgentReport[]>([])
-socket.off('agent_report')
-socket.on('agent_report', (data: AgentReport) => {
-    agentReports.value.push(data)
-})
-
-const clearAgentReports = () => { agentReports.value = [] }
 
 export const useBackend = () => {
+    // Per-instance reports list — not shared across components
     const connect = () => {
         console.log('Connecting to backend...')
         socket.connect()
     }
 
-    const request = async (event: string, data: any, timeout: number = 10000) => {
-        socket.emit(event, data)
+    const request = async (event: string, data: any = null, timeout: number = 10000) => {
+        if (data) {
+            socket.emit(event, data)
+        } else {
+            socket.emit(event)
+        }
         return new Promise((resolve, reject) => {
             const handler = (response: any) => {
                 clearTimeout(timeoutId)
@@ -50,5 +44,5 @@ export const useBackend = () => {
           })
     }
     
-    return { connectionStatus, connect, request, agentReports, clearAgentReports }
+    return { connectionStatus, connect, request, socket}
 }

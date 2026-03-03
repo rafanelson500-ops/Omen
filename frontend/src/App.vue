@@ -3,6 +3,7 @@ import { useBackend } from './composables/useBackend'
 import { onMounted } from 'vue'
 import Header from './components/Header.vue'
 import AgentStrategy from './components/AgentStrategy.vue'
+import ModelLab from './components/ModelLab.vue'
 
 const { connect } = useBackend()
 
@@ -14,4 +15,5 @@ onMounted(() => {
 <template>
   <Header />
   <AgentStrategy />
+  <ModelLab />
 </template>

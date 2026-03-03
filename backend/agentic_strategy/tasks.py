@@ -3,7 +3,7 @@ from agentic_strategy.agents import agents
 
 contextualizer_task = Task(
     description="You will get historical OHLCV for 10 hours and you will profide important levels, general price history, and most importantly CURRENT PRICE.",
-    expected_output="Current price at the top, then a brief summary of the price history and any important levels that you find. Also include the time of day (provided in UTC)",
+    expected_output="Current price at the top, then a brief summary of the price history and any important levels that you find. Also include the time of day (provided in UTC) and relevant session information (New York Open, London Session, ETH, etc).",
     agent=agents[0],
 )
 options_analyst_task = Task(
@@ -28,7 +28,7 @@ order_flow_analyst_task = Task(
 )
 
 trade_strategist_task = Task(
-    description="Use the Options Analyst's report and the Regime Analyst's report and the Order Flow Analyst's report to make a decision on what position to take and what targets to aim for. You should include side, position size, and targets.",
+    description="Use the Options Analyst's report and the Regime Analyst's report and the Order Flow Analyst's report to make a decision on what position to take and what targets to aim for. You should include side, position size, and targets. You will only suggest trades that have atleast 1/1 risk reward ratio.",
     expected_output="The tool call result with no extra text OR the exact text 'PASS' only if you are not taking a trade",
     agent=agents[4],
     context=[contextualizer_task, options_analyst_task, regime_analyst_task, order_flow_analyst_task],

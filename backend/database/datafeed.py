@@ -35,7 +35,7 @@ DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # List never expires. Candles older than 1 month are dropped on each update.
-OHLCV_RETENTION_SECONDS = 3 * 30 * 24 * 3600  # 1 month
+OHLCV_RETENTION_SECONDS = 12 * 30 * 24 * 3600  # 1 month
 
 dataset = "GLBX.MDP3"
 # Single key: value is JSON array [{timestamp, open, high, low, close, volume}, ...]. One GET returns the full list.

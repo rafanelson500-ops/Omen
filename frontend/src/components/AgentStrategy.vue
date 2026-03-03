@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useBackend } from '../composables/useBackend'
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 
 interface TradeSignal {
   side: 'long' | 'short' | string
@@ -17,29 +17,18 @@ interface BackendError {
 
 type Result = TradeSignal | 'PASS' | BackendError
 
-const { request, agentReports, clearAgentReports } = useBackend()
+const { socket } = useBackend()
 const loading = ref(false)
 const result = ref<Result | null>(null)
 const resultTimestamp = ref<string | null>(null)
+const agentReports = ref<{ agent: string, report: string }[]>([])
 
 const runAgenticStrategy = async () => {
   loading.value = true
   result.value = null
   resultTimestamp.value = null
-  clearAgentReports()
-  try {
-    const raw = await request('run_agentic_strategy', null, 300000)
-    result.value = parseResult(raw)
-    resultTimestamp.value = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    console.log(result.value)
-  } catch (err) {
-    const message = err instanceof Error && err.message.toLowerCase().includes('timed out')
-      ? 'Request timed out — the agent took too long to respond.'
-      : `Unexpected error: ${err instanceof Error ? err.message : String(err)}`
-    result.value = { kind: 'error', message }
-  } finally {
-    loading.value = false
-  }
+  agentReports.value = []
+  socket.emit('run_agentic_strategy', null)
 }
 
 const parseResult = (raw: unknown): Result => {
@@ -57,6 +46,17 @@ const parseResult = (raw: unknown): Result => {
 const isPass    = (r: Result | null): r is 'PASS'       => r === 'PASS'
 const isError   = (r: Result | null): r is BackendError  => typeof r === 'object' && r !== null && 'kind' in r
 const isTrade   = (r: Result | null): r is TradeSignal   => r !== null && r !== 'PASS' && !isError(r)
+
+onMounted(() => {
+  socket.on('agent_report', (data: { agent: string, report: string }) => {
+    agentReports.value.push({ agent: data.agent, report: data.report })
+  })
+  socket.on('agent_final', (data: string) => {
+    result.value = parseResult(data)
+    resultTimestamp.value = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    loading.value = false
+  })
+})
 </script>
 
 <template>
