@@ -107,7 +107,7 @@ def _calculate_value_area(prices_sorted, vols_sorted, value_area_pct):
 
 def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7):
     """
-    Adds VAL and VAH columns to a candle dataframe using rolling volume profile.
+    Adds VAL, VAH, and POC columns to a candle dataframe using rolling volume profile.
     Highly optimized version using numba JIT compilation.
 
     Parameters:
@@ -117,12 +117,13 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
         value_area_pct (float): % of volume to include in value area (default 70%)
 
     Returns:
-        pd.DataFrame with added columns ["VAL", "VAH"]
+        pd.DataFrame with added columns ["VAL", "VAH", "POC"]
     """
     
     df = df.copy()
     df["val"] = np.nan
     df["vah"] = np.nan
+    df["poc"] = np.nan
     
     # Convert to numpy arrays for faster access
     lows = df["low"].values.astype(np.float64)
@@ -132,9 +133,10 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
     # Pre-allocate result arrays
     val_results = np.full(len(df), np.nan, dtype=np.float64)
     vah_results = np.full(len(df), np.nan, dtype=np.float64)
+    poc_results = np.full(len(df), np.nan, dtype=np.float64)
     
     # Calculate volume profile for every candle to avoid look-ahead bias
-    # This ensures each candle's VAL/VAH is based only on the lookback window ending at that candle
+    # This ensures each candle's VAL/VAH/POC is based only on the lookback window ending at that candle
     for i in range(lookback, len(df)):
         start_idx = i - lookback
         window_lows = lows[start_idx:i]
@@ -162,9 +164,14 @@ def add_value_area_levels(df, lookback=100, price_step=0.25, value_area_pct=0.7)
         val, vah = _calculate_value_area(prices_sorted, vols_sorted, value_area_pct)
         val_results[i] = val
         vah_results[i] = vah
+        
+        # Calculate POC (Point of Control) - price with highest volume
+        # prices_sorted is already sorted by volume descending, so first element is POC
+        poc_results[i] = prices_sorted[0]
     
     # Assign results back to dataframe (much faster than iloc)
     df["val"] = val_results
     df["vah"] = vah_results
+    df["poc"] = poc_results
     
     return df
