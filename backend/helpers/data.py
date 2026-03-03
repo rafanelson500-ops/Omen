@@ -26,25 +26,25 @@ def get_data():
             return datetime.fromisoformat(s).timestamp()
         except Exception:
             return 0
-    attemps = 10
+    attempts = 10
     df = None
-    while attemps > 0:
+    while attempts > 0:
         try:
-            print("Attempting to get data from Redis")
             raw = redis_client.get(OHLCV_LIST_KEY)
-            print("Got data from Redis")
             candles = json.loads(raw) if raw else []
-            print("Parsed data")
             candles = sorted(candles, key=lambda c: _parse_ts(c.get("timestamp")))
             df = pd.DataFrame(candles)
             df["timestamp"] = pd.to_datetime(df["timestamp"], format="mixed")
             df = df.set_index("timestamp")
-            attemps = 0
+            break
         except Exception as e:
-            print("Error getting data from Redis: ", e)
-            raise e
-            attemps -= 1
-            time.sleep(0.1)
+            attempts -= 1
+            if attempts > 0:
+                print(f"Error getting data from Redis (retrying, {attempts} attempts left): {e}")
+                time.sleep(0.1)
+            else:
+                print(f"Error getting data from Redis (no more attempts): {e}")
+                raise e
 
     # Resample to 5m (bins start when minute % 5 == 0: 10:00, 10:05, 10:10, ...)
     completed = df.resample("5min").agg(

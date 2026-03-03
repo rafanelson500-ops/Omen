@@ -22,10 +22,10 @@ export const useChartUtils = () => {
         })
     }
 
-    const addSeries = (chartId: number, seriesType: typeof CandlestickSeries | typeof LineSeries, data: any[]) => {
+    const addSeries = (chartId: number, seriesType: typeof CandlestickSeries | typeof LineSeries, data: any[], pane: number = 0) => {
         const chart = allCharts.value[chartId]
         if (!chart) return
-        const series = chart.addSeries(seriesType)
+        const series = chart.addSeries(seriesType, {}, pane)
         series.setData(data)
         allSeries.value[chartId]?.push(series)
         return series

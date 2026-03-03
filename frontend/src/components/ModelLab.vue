@@ -5,9 +5,9 @@ import { createChart } from 'lightweight-charts'
 import type { IChartApi } from 'lightweight-charts'
 import { chartOptions } from '../styles/chartOptions.ts'
 import { useChartUtils } from '../composables/useChartUtils.ts'
-import { CandlestickSeries } from 'lightweight-charts'
+import { CandlestickSeries, LineSeries } from 'lightweight-charts'
 
-const { request } = useBackend()
+const { request, socket } = useBackend()
 const { registerChart, addSeries, clearChart, cleanSeries } = useChartUtils()
 
 const chartRef = ref<HTMLElement | null>(null)
@@ -22,11 +22,13 @@ const gbtTargetHorizon = ref<number>(2)
 const trainingHMM = ref<boolean>(false)
 const trainingGBT = ref<boolean>(false)
 const loadingData = ref<boolean>(false)
+const latestData = ref<any[]>([])
 
-const loadData = async () => {
+const loadData = async (type: 'live' | 'cache') => {
     loadingData.value = true
     clearChart(0)
-    const response = await request('load_data')
+    const response = await request('load_data', type, 120000)
+    latestData.value = response as any[]
     allFeatures.value = Object.keys((response as any[])[0])
     addSeries(0, CandlestickSeries, cleanSeries(response as any[], {
         time: ['time', 1/1000],
@@ -40,17 +42,49 @@ const loadData = async () => {
 }
 
 const trainHMM = async () => {
+    if (hmmFeatures.value.length === 0) {
+      alert('Please select at least one feature')
+      return
+    }
     trainingHMM.value = true
-    console.log('Training HMM...')
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    const response = await request('train_hmm', { features: hmmFeatures.value, states: hmmStates.value })
+    latestData.value = response as any[]
+    clearChart(0)
+    allFeatures.value = Object.keys((response as any[])[0])
+    addSeries(0, CandlestickSeries, cleanSeries(response as any[], {
+        time: ['time', 1/1000],
+        open: ['open', 1],
+        high: ['high', 1],
+        low: ['low', 1],
+        close: ['close', 1],
+        volume: ['volume', 1],
+    }))
     trainingHMM.value = false
 }
 
 const trainGBT = async () => {
+    if (gbtFeatures.value.length === 0) {
+      alert('Please select at least one feature')
+      return
+    }
     trainingGBT.value = true
     console.log('Training GBT...')
     await new Promise(resolve => setTimeout(resolve, 1000))
     trainingGBT.value = false
+}
+
+const addFeatureSeries = () => {
+  const name = prompt('Enter the name of the feature to add:')
+  const pane = prompt('Enter the pane number to add the series to:')
+  if (!name || !pane) return
+  try {
+    addSeries(0, LineSeries, cleanSeries(latestData.value, {
+      time: ['time', 1/1000],
+        value: [name, 1],
+    }), parseInt(pane))
+  } catch (error) {
+    alert('Error adding feature series: ' + error)
+  }
 }
 
 const toggleHmmFeature = (feat: string, checked: boolean) => {
@@ -92,10 +126,24 @@ onMounted(() => {
         </div>
         <div :class="$style.sectionBody">
           <div :class="$style.chartContainer" ref="chartRef" />
-          <button :class="$style.actionBtn" :disabled="loadingData" @click="loadData">
-            <span v-if="loadingData" :class="$style.spinner" />
-            📂 Load Data
-          </button>
+          <div :class="$style.buttonGroup">
+            <button :class="$style.actionBtn" :disabled="loadingData" @click="loadData('live')">
+              <span v-if="loadingData" :class="$style.spinner" />
+              📂 Load Data
+            </button>
+            <button :class="$style.actionBtn" :disabled="loadingData" @click="loadData('cache')">
+              <span v-if="loadingData" :class="$style.spinner" />
+              📂 Load Cached Data
+            </button>
+            <button :class="$style.actionBtn" :disabled="loadingData" @click="socket.emit('save_cache')">
+              <span v-if="loadingData" :class="$style.spinner" />
+              📂 Save Cached Data
+            </button>
+            <button :class="$style.actionBtn" :disabled="loadingData" @click="addFeatureSeries">
+              <span v-if="loadingData" :class="$style.spinner" />
+              📊 Add Feature Series
+            </button>
+          </div>
         </div>
       </div>
 
@@ -154,14 +202,22 @@ onMounted(() => {
               </div>
             </div>
 
-            <button
-              :class="[$style.actionBtn, $style.actionBtnPrimary]"
-              :disabled="trainingHMM"
-              @click="trainHMM"
-            >
-              <span v-if="trainingHMM" :class="$style.spinner" />
-              <span>{{ trainingHMM ? 'Training…' : 'Train HMM' }}</span>
-            </button>
+            <div :class="$style.buttonGroup">
+              <button
+                :class="[$style.actionBtn, $style.actionBtnPrimary]"
+                :disabled="trainingHMM"
+                @click="trainHMM"
+              >
+                <span v-if="trainingHMM" :class="$style.spinner" />
+                <span>{{ trainingHMM ? 'Training…' : 'Train HMM' }}</span>
+              </button>
+              <button
+                :class="[$style.actionBtn, $style.actionBtnPrimary]"
+                @click="socket.emit('save_hmm')"
+              >
+                Save HMM
+              </button>
+            </div>
           </div>
         </div>
 

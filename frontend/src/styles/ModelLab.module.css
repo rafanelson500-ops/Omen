@@ -134,6 +134,15 @@
   border-radius: 10px;
 }
 
+/* ── Button group ────────────────────────────────────── */
+.buttonGroup {
+  display: flex;
+  flex-direction: row;
+  gap: 0.75rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
 /* ── Action buttons ──────────────────────────────────── */
 .actionBtn {
   display: inline-flex;
