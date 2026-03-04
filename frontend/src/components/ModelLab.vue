@@ -65,6 +65,23 @@ const trainHMM = async () => {
     trainingHMM.value = false
 }
 
+const loadHMM = async () => {
+  trainingHMM.value = true
+  const response = await request('load_hmm', { features: hmmFeatures.value })
+  latestData.value = response as any[]
+  clearChart(0)
+  addedFeatures.value = {}
+  allFeatures.value = Object.keys((response as any[])[0])
+  addSeries(0, CandlestickSeries, cleanSeries(response as any[], {
+      time: ['time', 1/1000],
+      open: ['open', 1],
+      high: ['high', 1],
+      low: ['low', 1],
+      close: ['close', 1],
+      volume: ['volume', 1],
+  }))
+  trainingHMM.value = false
+}
 const trainGBT = async () => {
     if (gbtFeatures.value.length === 0) {
       alert('Please select at least one feature')
@@ -242,6 +259,14 @@ onMounted(() => {
               >
                 <span v-if="trainingHMM" :class="$style.spinner" />
                 <span>{{ trainingHMM ? 'Training…' : 'Train HMM' }}</span>
+              </button>
+              <button
+                :class="[$style.actionBtn, $style.actionBtnPrimary]"
+                :disabled="trainingHMM"
+                @click="loadHMM"
+              >
+                <span v-if="trainingHMM" :class="$style.spinner" />
+                <span>{{ trainingHMM ? 'Loading…' : 'Load HMM' }}</span>
               </button>
               <button
                 :class="[$style.actionBtn, $style.actionBtnPrimary]"

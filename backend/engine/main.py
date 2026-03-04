@@ -12,6 +12,9 @@ if not webhook_url:
     raise ValueError("WEBHOOK_URL is not set")
 
 execution_times = [
+    "16:00:00",
+    "17:15:00",
+    "18:30:00",
     "20:00:00"
 ]
 
@@ -78,7 +81,4 @@ def start_engine():
                 print(f"{current_time} - Error parsing trade signal: {e}")
                 print(f"Raw result: {result_str}")
 
-        print(current_time)
         time.sleep(1)
-
-start_engine()

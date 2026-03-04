@@ -19,6 +19,7 @@ def start_model_lab(socketio):
             df = pd.read_csv('cached_data/data.csv')
             split_idx = int(len(df) * (2/3))
             df = df.iloc[split_idx:]
+            last_data = df.copy()
         else:
             df = get_data()
             df = add_features(df).dropna()
@@ -47,6 +48,47 @@ def start_model_lab(socketio):
         current_hmm = hmm
         testing_data["hmm_state"] = hmm.predict(testing_data[data['features']].values)
         emit('train_hmm', testing_data.to_dict(orient='records'))
+
+    @socketio.on('load_hmm')
+    def load_hmm(data):
+        global current_hmm, last_data
+        try:
+            # Check if model file exists
+            model_path = 'trained_models/hmm.pkl'
+            if not os.path.exists(model_path):
+                emit('load_hmm', {'error': 'HMM model file not found. Please train and save a model first.'})
+                return
+            
+            # Load the model
+            if not os.path.exists('trained_models'):
+                os.makedirs('trained_models')
+            with open(model_path, 'rb') as f:
+                current_hmm = pickle.load(f)
+            
+            # Validate that we have data to predict on
+            if last_data.empty:
+                emit('load_hmm', {'error': 'No data loaded. Please load data first.'})
+                return
+            
+            # Validate features exist in data
+            features = data.get('features', [])
+            if not features:
+                emit('load_hmm', {'error': 'No features specified.'})
+                return
+            
+            missing_features = [f for f in features if f not in last_data.columns]
+            if missing_features:
+                emit('load_hmm', {'error': f'Features not found in data: {missing_features}'})
+                return
+            
+            # Make a copy and predict
+            result_data = last_data.copy()
+            result_data["hmm_state"] = current_hmm.predict(result_data[features].values)
+            emit('load_hmm', result_data.to_dict(orient='records'))
+        except FileNotFoundError:
+            emit('load_hmm', {'error': 'HMM model file not found.'})
+        except Exception as e:
+            emit('load_hmm', {'error': f'Error loading HMM: {str(e)}'})
 
     @socketio.on('save_hmm')
     def save_hmm():

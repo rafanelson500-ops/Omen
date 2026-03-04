@@ -45,12 +45,12 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     start_time = time.time()
     
     # Calculate EMA(20) on close price
-    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema"] = df["close"].ewm(span=12, adjust=False).mean()
     df = add_value_area_levels(df)
 
-    df["ema_vwap_spread"] = abs(df["session_vwap"] - df["ema_20"])
+    df["ema_vwap_spread"] = abs(df["session_vwap"] - df["ema"])
     df["vwap_poc_spread"] = abs(df["session_vwap"] - df["poc"])
-    df["poc_ema_spread"] = abs(df["poc"] - df["ema_20"])
+    df["poc_ema_spread"] = abs(df["poc"] - df["ema"])
 
     vol = np.sqrt(df["har_rv"]).clip(lower=1e-6)
 
@@ -67,7 +67,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Composite mean properly
     composite_mean = pd.concat([
-        df["ema_20"],
+        df["ema"],
         df["session_vwap"],
         df["poc"]
     ], axis=1).mean(axis=1)
