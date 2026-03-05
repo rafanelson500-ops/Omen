@@ -1,20 +1,33 @@
-import os
-from dotenv import load_dotenv
-from flask import Flask, request, jsonify
-from flask_socketio import SocketIO, emit
-from api.main import start_api
-from engine.main import start_engine
-import threading
+import helpers.data as data
+import helpers.features as features
+import joblib
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import hmmlearn.hmm as hmm
+import numpy as np
+import flask
+from flask import jsonify
+from flask_cors import CORS
+import joblib
 
-load_dotenv()
+app = flask.Flask(__name__)
+CORS(app)
 
-app = Flask(__name__)
-socketio = SocketIO(app)
-socketio.init_app(app, cors_allowed_origins="*")
+hmm_features = ["mean_spread", "spread_std", "vol_accel", "har_rv"]
 
-start_api(socketio)
+def graph_notation(df):
+    df["graph:0:white"] = df["composite_mean"]
+    return df
+
+@app.route("/data")
+def get_data():
+    df = data.get_data()
+    df = features.add_features(df)
+    df = df.dropna()
+    hmm = joblib.load("trained_models/regime_hmm.pkl")
+    df["hmm_state"] = hmm.predict(df[hmm_features])
+    df = graph_notation(df)
+    return jsonify(df.to_dict(orient="records"))
 
 if __name__ == "__main__":
-    thread = threading.Thread(target=start_engine, daemon=True)
-    thread.start()
-    socketio.run(app, debug=True, port=8000, host='0.0.0.0')
+    app.run(debug=True, host="0.0.0.0", port=8000)

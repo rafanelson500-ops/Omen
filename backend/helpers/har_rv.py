@@ -15,9 +15,9 @@ def add_har_rv(df: pd.DataFrame) -> pd.DataFrame:
     rv = log_ret ** 2
 
     # HAR-RV components at different horizons (lagged by 1 period for prediction)
-    rv_short = rv.shift(1)                           # 1 bar  =  5 minutes (lagged)
-    rv_medium = rv.rolling(6).mean().shift(1)        # 6 bars = 30 minutes (lagged)
-    rv_long = rv.rolling(24).mean().shift(1)         # 24 bars = 2 hours (lagged)
+    rv_short = rv.shift(24)                           # 1 bar  =  5 minutes (lagged)
+    rv_medium = rv.rolling(288).mean().shift(1)        # 6 bars = 30 minutes (lagged)
+    rv_long = rv.rolling(864).mean().shift(1)         # 24 bars = 2 hours (lagged)
     
     # Prepare data for regression: drop rows with NaN values
     valid_mask = ~(rv.isna() | rv_short.isna() | rv_medium.isna() | rv_long.isna())
