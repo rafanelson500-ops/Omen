@@ -10,11 +10,16 @@ const chartData = ref<any[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 
+let url = 'http://localhost:8000'
+if (window.location.hostname === 'play.nukesmp.com') {
+  url = 'http://play.nukesmp.com:8000'
+}
+
 const fetchData = async () => {
   try {
     loading.value = true
     error.value = null
-    const response = await fetch('http://localhost:8000/data')
+    const response = await fetch(url+'/data')
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
@@ -121,7 +126,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <header class="app-header">
-      <h1 class="app-title">Cheese Trading Dashboard</h1>
+      <h1 class="app-title">Trading Dashboard</h1>
       <div class="header-actions">
       </div>
     </header>

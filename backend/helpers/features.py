@@ -63,7 +63,12 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     ], axis=1).mean(axis=1)
 
     df["mean_divergence"] = (df["close"] - df["composite_mean"]) / vol
+    df["har_sigma"] = np.sqrt(df["har_rv"] * 1e8).rolling(3).mean()
 
     print(f"Features computed in {time.time() - start_time:.3f}s")
 
+    return df
+
+def add_target(df):
+    df["target"] = (abs(df["close"] - df["composite_mean"]) - abs(df["close"].shift(-3) - df["composite_mean"])) / (df["har_sigma"] * 1e2)
     return df
