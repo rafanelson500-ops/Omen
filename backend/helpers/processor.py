@@ -3,6 +3,7 @@ import time
 from numba import jit
 
 gbt_threshold = 0.6
+gbt_max_threshold = 0.675
 
 @jit(nopython=True)
 def _process_strategy_numba(
@@ -115,7 +116,7 @@ def _process_strategy_numba(
         
         # Entry Criteria - only enter if flat
         if current_position == 0:
-            if gbt_val > gbt_threshold:
+            if gbt_val > gbt_threshold and gbt_val < gbt_max_threshold:
                 if close_val > mean_val + 0.5 * sigma_val:
                     # Short position
                     current_position = -1

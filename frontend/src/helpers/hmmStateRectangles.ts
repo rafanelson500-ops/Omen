@@ -10,7 +10,7 @@ export interface HmmStateRegion {
 
 // State colors (3 states: 0, 1, 2) - hex colors without #
 const DEFAULT_STATE_COLORS: Record<number, string> = {
-  0: 'C91871',   // State 0: Blue
+  0: 'C9B718',   // State 0: Blue
   1: 'AB18C9',    // State 1: Red
   2: 'C9B718',    // State 2: Green
 }
