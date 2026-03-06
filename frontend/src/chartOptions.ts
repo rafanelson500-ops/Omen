@@ -22,9 +22,9 @@ export const chartOptions = {
       horzLines: { color: chartTheme.border },
     },
     crosshair: {
-      vertLine: { color: chartTheme.muted, labelBackgroundColor: chartTheme.accent },
-      horzLine: { color: chartTheme.muted, labelBackgroundColor: chartTheme.accent },
-      mode: CrosshairMode.Normal,
+      vertLine: { color: "#ffffff", labelBackgroundColor: "#000000" },
+      horzLine: { color: "#ffffff", labelBackgroundColor: "#000000" },
+      mode: CrosshairMode.Magnet,
     },
     rightPriceScale: {
       borderColor: chartTheme.border,

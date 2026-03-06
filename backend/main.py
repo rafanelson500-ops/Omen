@@ -1,5 +1,6 @@
 import helpers.data as data
 import helpers.features as features
+import helpers.processor as processor
 import joblib
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -12,9 +13,9 @@ from flask_cors import CORS
 app = flask.Flask(__name__)
 CORS(app)
 
-hmm_features = ["mean_spread", "spread_std", "vol_accel", "har_rv"]
-gbt_features = ["hmm_state", "mean_divergence", "har_sigma"]
-sequence_length = 24
+hmm_features = ["mean_spread", "spread_std", "vol_accel", "har_rv", "mean_compression", "composite_mean"]
+gbt_features = ["hmm_state", "mean_divergence", "divergence_change", "mean_velocity", "dist_vah", "dist_val", "composite_mean", "har_rv", "har_sigma", "vol_accel"]
+sequence_length = 12
 train_size = 0.6  # Match training split
 
 def create_sequences(data, features, exclude_last_n=0):
@@ -61,15 +62,19 @@ def graph_notation(df):
     df["graph:0:red:sig2lower"] = df["composite_mean"] - df["har_sigma"] * 2
 
     # target
-    df["graph:1:green"] = df["target"] * 1e2
+    #df["graph:1:green"] = df["target"]
     # Fill NaN gbt_target with 0 for rows where we couldn't predict (not enough history)
-    df["graph:1:red"] = df["gbt_target"].fillna(0) * 1e2
+    df["graph:1:red"] = df["gbt_target"].fillna(0)
+
+    # Strategy
+    df["graph:2:grey"] = df["base_cumulative"]
+    df["graph:2:green"] = df["strategy_cumulative"]
     
     return df
 
 @app.route("/data")
 def get_data():
-    df = data.get_data()
+    df = data.get_data().iloc[-int(len(data.get_data()) * (1-train_size)):]
     df = features.add_features(df)
     # Only drop rows where essential features are missing (not target)
     df = df.dropna(subset=[col for col in df.columns if col != 'target'])
@@ -91,7 +96,8 @@ def get_data():
     # Make predictions for all valid sequences (including current candle)
     # Each prediction uses only historical data (12 previous completed candles)
     gbt = joblib.load("trained_models/gbt.pkl")
-    predictions = gbt.predict(X_sequences)
+    # Use predict_proba to get probabilities (0-1) instead of binary predictions (0 or 1)
+    predictions = gbt.predict_proba(X_sequences)[:, 1]  # Probability of class 1
     
     # Initialize gbt_target column with NaN
     df["gbt_target"] = np.nan
@@ -104,11 +110,12 @@ def get_data():
     # Only fill NaN in gbt_target for rows where we couldn't predict (not enough history)
     # But keep those rows in the output
     
+    df = processor.process_data(df)
     df = graph_notation(df)
     
     # Return all data up to the current candle (last 480 rows for performance)
     # This includes the current candle with predictions
-    return jsonify(df.iloc[-480:].to_dict(orient="records"))
+    return jsonify(df.dropna().to_dict(orient="records"))
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8000)
