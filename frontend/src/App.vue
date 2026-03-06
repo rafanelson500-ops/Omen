@@ -4,11 +4,13 @@ import { createChart } from 'lightweight-charts'
 import { CandlestickSeries, LineSeries, type CandlestickData, type LineData, type Time } from 'lightweight-charts'
 import { chartOptions } from './chartOptions'
 import { addHmmStateRectangles } from './helpers/hmmStateRectangles'
+import MonteCarloSimulation from './components/MonteCarloSimulation.vue'
 
 const chartContainer = ref<HTMLDivElement | null>(null)
 const chartData = ref<any[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
+const monteCarloComponent = ref<InstanceType<typeof MonteCarloSimulation> | null>(null)
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
@@ -121,6 +123,10 @@ onUnmounted(() => {
     chart.remove()
   }
 })
+
+const openMonteCarloDialog = () => {
+  monteCarloComponent.value?.openDialog()
+}
 </script>
 
 <template>
@@ -128,6 +134,9 @@ onUnmounted(() => {
     <header class="app-header">
       <h1 class="app-title">Trading Dashboard</h1>
       <div class="header-actions">
+        <button @click="openMonteCarloDialog" class="monte-carlo-btn">
+          Run Monte Carlo
+        </button>
       </div>
     </header>
     
@@ -145,6 +154,9 @@ onUnmounted(() => {
       <div v-else class="chart-wrapper">
         <div ref="chartContainer" class="chart-container"></div>
       </div>
+      
+      <!-- Monte Carlo Component -->
+      <MonteCarloSimulation ref="monteCarloComponent" :api-url="url" @close="() => {}" />
     </main>
   </div>
 </template>
@@ -189,6 +201,29 @@ onUnmounted(() => {
   display: flex;
   gap: 1rem;
 }
+
+.monte-carlo-btn {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: white;
+  border: none;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);
+}
+
+.monte-carlo-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.4);
+}
+
+.monte-carlo-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 
 .refresh-btn {
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
@@ -321,5 +356,11 @@ onUnmounted(() => {
 
 .chart-wrapper:hover {
   box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.4), 0 15px 15px -5px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 768px) {
+  .chart-container {
+    min-height: 400px;
+  }
 }
 </style>

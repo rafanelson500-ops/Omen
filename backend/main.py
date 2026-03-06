@@ -1,13 +1,14 @@
 import helpers.data as data
 import helpers.features as features
 import helpers.processor as processor
+import helpers.monte_carlo as monte_carlo
 import joblib
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import hmmlearn.hmm as hmm
 import numpy as np
 import flask
-from flask import jsonify
+from flask import jsonify, request
 from flask_cors import CORS
 
 app = flask.Flask(__name__)
@@ -116,6 +117,46 @@ def get_data():
     # Return all data up to the current candle (last 480 rows for performance)
     # This includes the current candle with predictions
     return jsonify(df.dropna().to_dict(orient="records"))
+
+@app.route("/monte-carlo", methods=["POST"])
+def run_monte_carlo_simulation():
+    """Run Monte Carlo simulation and return results."""
+    try:
+        data_request = request.get_json()
+        num_simulations = int(data_request.get("num_simulations", 1000))
+        
+        if num_simulations < 1 or num_simulations > 10000:
+            return jsonify({"error": "num_simulations must be between 1 and 10000"}), 400
+        
+        # Load and prepare data (same as /data endpoint)
+        df = data.get_data().iloc[-int(len(data.get_data()) * (1-train_size)):]
+        df = features.add_features(df)
+        df = df.dropna(subset=[col for col in df.columns if col != 'target'])
+        
+        hmm_model = joblib.load("trained_models/regime_hmm.pkl")
+        df["hmm_state"] = hmm_model.predict(df[hmm_features])
+        
+        df = features.add_target(df)
+        df["target"] = df["target"].fillna(0)
+        
+        # Create sequences and get predictions
+        X_sequences, valid_indices = create_sequences(df, gbt_features, exclude_last_n=0)
+        gbt = joblib.load("trained_models/gbt.pkl")
+        predictions = gbt.predict_proba(X_sequences)[:, 1]
+        
+        df["gbt_target"] = np.nan
+        df.loc[df.index[valid_indices], "gbt_target"] = predictions
+        
+        # Process data to get base_returns
+        df = processor.process_data(df)
+        
+        # Run Monte Carlo simulation
+        results = monte_carlo.run_monte_carlo(df, num_simulations)
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8000)
