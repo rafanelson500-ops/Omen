@@ -10,9 +10,9 @@ export interface HmmStateRegion {
 
 // State colors (3 states: 0, 1, 2) - hex colors without #
 const DEFAULT_STATE_COLORS: Record<number, string> = {
-  0: 'C9B718',   // State 0: Blue
-  1: 'AB18C9',    // State 1: Red
-  2: 'C9B718',    // State 2: Green
+  0: '00FFFD',   // State 0: Blue
+  1: 'FFFFFF',    // State 1: Red
+  2: 'B652FF',    // State 2: Green
 }
 
 // Pre-computed color cache to avoid repeated parsing
@@ -36,7 +36,7 @@ function hexToRgba(hex: string, alpha: number): string {
     colorCache.set(hex, rgb)
   }
   
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${0.1})`
 }
 
 /**

@@ -14,7 +14,7 @@ load_dotenv()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis_client = redis.from_url(REDIS_URL)
 
-OHLCV_LIST_KEY = "ohlcv:ES:list"
+OHLCV_LIST_KEY = "ohlcv:NQ:list"
 
 def get_data():
     def _parse_ts(ts_str):

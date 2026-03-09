@@ -18,6 +18,10 @@ def add_har_rv(df: pd.DataFrame) -> pd.DataFrame:
     rv_short = rv.shift(24)                           # 1 bar  =  5 minutes (lagged)
     rv_medium = rv.rolling(288).mean().shift(1)        # 6 bars = 30 minutes (lagged)
     rv_long = rv.rolling(864).mean().shift(1)         # 24 bars = 2 hours (lagged)
+
+    df["rv_short"] = rv_short
+    df["rv_medium"] = rv_medium
+    df["rv_long"] = rv_long
     
     # Prepare data for regression: drop rows with NaN values
     valid_mask = ~(rv.isna() | rv_short.isna() | rv_medium.isna() | rv_long.isna())

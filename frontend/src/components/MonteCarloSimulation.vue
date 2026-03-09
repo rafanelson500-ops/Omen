@@ -22,6 +22,10 @@ const equityChartContainer = ref<HTMLDivElement | null>(null)
 const returnDistCanvas = ref<HTMLCanvasElement | null>(null)
 const drawdownDistCanvas = ref<HTMLCanvasElement | null>(null)
 const evDistCanvas = ref<HTMLCanvasElement | null>(null)
+const sharpeAvgDistCanvas = ref<HTMLCanvasElement | null>(null)
+const sharpeStdDistCanvas = ref<HTMLCanvasElement | null>(null)
+const ruinDistCanvas = ref<HTMLCanvasElement | null>(null)
+const successRateCanvas = ref<HTMLCanvasElement | null>(null)
 
 let equityChart: ReturnType<typeof createChart> | null = null
 
@@ -188,7 +192,7 @@ const createHistogramData = (data: number[], numBins: number = 30): { bins: BinD
 
 const tooltip = ref<{ show: boolean, x: number, y: number, text: string }>({ show: false, x: 0, y: 0, text: '' })
 
-const renderHistogram = (canvas: HTMLCanvasElement, data: number[], title: string, color: string) => {
+const renderHistogram = (canvas: HTMLCanvasElement, data: number[], title: string, color: string, threshold?: number) => {
   if (!canvas || !data || data.length === 0) return
   
   const ctx = canvas.getContext('2d')
@@ -249,19 +253,18 @@ const renderHistogram = (canvas: HTMLCanvasElement, data: number[], title: strin
       const x = i * barWidth + padding
       const y = chartAreaBottom - barHeight
       
+      // Colour bars that are entirely in the ruin zone red
+      const belowThreshold = threshold !== undefined && bin.binEnd <= threshold
+      const barColor = belowThreshold ? '#ef4444' : color
+      
       // Highlight hovered bar
-      if (hoveredBin === bin) {
-        ctx.fillStyle = color
-        ctx.globalAlpha = 1.0
-      } else {
-        ctx.fillStyle = color
-        ctx.globalAlpha = 0.6
-      }
+      ctx.fillStyle = barColor
+      ctx.globalAlpha = hoveredBin === bin ? 1.0 : 0.6
       
       ctx.fillRect(x, y, barWidth - padding * 2, barHeight)
       
       // Draw border
-      ctx.strokeStyle = color
+      ctx.strokeStyle = barColor
       ctx.lineWidth = 1
       ctx.strokeRect(x, y, barWidth - padding * 2, barHeight)
     })
@@ -280,6 +283,26 @@ const renderHistogram = (canvas: HTMLCanvasElement, data: number[], title: strin
     ctx.moveTo(0, chartAreaBottom)
     ctx.lineTo(0, chartAreaTop)
     ctx.stroke()
+    
+    // Draw threshold vertical line if provided
+    if (threshold !== undefined && threshold >= min && threshold <= max) {
+      const thresholdX = ((threshold - min) / (max - min)) * width
+      ctx.save()
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = 2
+      ctx.setLineDash([5, 4])
+      ctx.beginPath()
+      ctx.moveTo(thresholdX, chartAreaTop)
+      ctx.lineTo(thresholdX, chartAreaBottom)
+      ctx.stroke()
+      ctx.setLineDash([])
+      // Label
+      ctx.fillStyle = '#ef4444'
+      ctx.font = '9px "Outfit", system-ui, sans-serif'
+      ctx.textAlign = thresholdX > width / 2 ? 'right' : 'left'
+      ctx.fillText(`ruin: ${threshold.toFixed(decimals)}`, thresholdX + (thresholdX > width / 2 ? -4 : 4), chartAreaTop + 12)
+      ctx.restore()
+    }
     
     // Draw x-axis labels
     ctx.fillStyle = '#94a3b8'
@@ -361,6 +384,97 @@ const renderHistogram = (canvas: HTMLCanvasElement, data: number[], title: strin
   redraw()
 }
 
+const renderSuccessRateChart = (canvas: HTMLCanvasElement, pSuccess: number, pRuinFirst: number, pNeither: number, successThresh: number, ruinThresh: number) => {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const rect = canvas.getBoundingClientRect()
+  canvas.width = rect.width * window.devicePixelRatio
+  canvas.height = rect.height * window.devicePixelRatio
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+
+  const width = rect.width
+  const height = rect.height
+
+  ctx.clearRect(0, 0, width, height)
+
+  const titleH = 34
+  const barTop = titleH + 16
+  const barH = 52
+  const barBot = barTop + barH
+  const labelAreaH = height - barBot - 8
+
+  // Title
+  ctx.fillStyle = '#e2e8f0'
+  ctx.font = 'bold 14px "Outfit", system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('P(Success Before Ruin)', width / 2, 22)
+
+  // ── stacked bar ──────────────────────────────────────────────────────────
+  const segments = [
+    { pct: pSuccess,   color: '#22c55e', label: 'Success' },
+    { pct: pNeither,   color: '#475569', label: 'Neither'  },
+    { pct: pRuinFirst, color: '#ef4444', label: 'Ruin'     },
+  ]
+
+  let xCursor = 0
+  segments.forEach(seg => {
+    const segW = seg.pct * width
+    ctx.fillStyle = seg.color
+    ctx.globalAlpha = 0.85
+    ctx.fillRect(xCursor, barTop, segW, barH)
+    ctx.globalAlpha = 1.0
+
+    // Percentage label inside bar (only if wide enough)
+    if (segW > 28) {
+      const pctStr = (seg.pct * 100).toFixed(1) + '%'
+      ctx.fillStyle = '#fff'
+      ctx.font = `bold ${segW > 56 ? 15 : 11}px "Outfit", system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(pctStr, xCursor + segW / 2, barTop + barH / 2)
+    }
+    xCursor += segW
+  })
+
+  // Bar border
+  ctx.strokeStyle = 'rgba(148,163,184,0.3)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(0, barTop, width, barH)
+
+  // ── legend (vertically stacked) ──────────────────────────────────────────
+  const dotR = 6
+  const lineH = 22
+  const items = [
+    { color: '#22c55e', text: `${(pSuccess   * 100).toFixed(1)}%  hit +${successThresh} first` },
+    { color: '#475569', text: `${(pNeither   * 100).toFixed(1)}%  hit neither`                },
+    { color: '#ef4444', text: `${(pRuinFirst * 100).toFixed(1)}%  hit ${ruinThresh} first`    },
+  ]
+  const totalLegendH = items.length * lineH
+  const legendStartY = barBot + (labelAreaH - totalLegendH) / 2 + lineH / 2
+
+  ctx.font = '12px "Outfit", system-ui, sans-serif'
+  ctx.textBaseline = 'middle'
+
+  // Measure widest label to centre the whole block
+  const maxTextW = Math.max(...items.map(it => ctx.measureText(it.text).width))
+  const blockW = dotR * 2 + 10 + maxTextW
+  const blockX = (width - blockW) / 2
+
+  items.forEach((item, i) => {
+    const cy = legendStartY + i * lineH
+
+    ctx.fillStyle = item.color
+    ctx.beginPath()
+    ctx.arc(blockX + dotR, cy, dotR, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.fillStyle = '#cbd5e1'
+    ctx.textAlign = 'left'
+    ctx.fillText(item.text, blockX + dotR * 2 + 10, cy)
+  })
+}
+
 const renderDistributionCharts = () => {
   if (!results.value) return
   
@@ -388,6 +502,49 @@ const renderDistributionCharts = () => {
       results.value.expected_value_distribution,
       'Expected Value Distribution',
       '#fbbf24'
+    )
+  }
+  
+  const sharpeWindow = results.value.sharpe_window ?? 20
+  
+  if (sharpeAvgDistCanvas.value) {
+    renderHistogram(
+      sharpeAvgDistCanvas.value,
+      results.value.sharpe_avg_distribution,
+      `Avg Sharpe Distribution (window=${sharpeWindow})`,
+      '#38bdf8'
+    )
+  }
+  
+  if (sharpeStdDistCanvas.value) {
+    renderHistogram(
+      sharpeStdDistCanvas.value,
+      results.value.sharpe_std_distribution,
+      `Sharpe Std Distribution (window=${sharpeWindow})`,
+      '#a78bfa'
+    )
+  }
+  
+  if (ruinDistCanvas.value) {
+    const ruinThreshold: number = results.value.ruin_threshold ?? -20
+    const pct = ((results.value.probability_of_ruin ?? 0) * 100).toFixed(1)
+    renderHistogram(
+      ruinDistCanvas.value,
+      results.value.min_return_distribution,
+      `Min Return Distribution  |  P(Ruin) = ${pct}%`,
+      '#fb923c',
+      ruinThreshold
+    )
+  }
+  
+  if (successRateCanvas.value) {
+    renderSuccessRateChart(
+      successRateCanvas.value,
+      results.value.probability_of_success    ?? 0,
+      results.value.probability_of_ruin_first ?? 0,
+      results.value.probability_of_neither    ?? 0,
+      results.value.success_threshold         ?? 40,
+      results.value.ruin_threshold            ?? -20,
     )
   }
 }
@@ -453,6 +610,30 @@ defineExpose({
           <div class="chart-panel">
             <div class="histogram-wrapper">
               <canvas ref="evDistCanvas" class="histogram-canvas"></canvas>
+            </div>
+          </div>
+          
+          <div class="chart-panel">
+            <div class="histogram-wrapper">
+              <canvas ref="sharpeAvgDistCanvas" class="histogram-canvas"></canvas>
+            </div>
+          </div>
+          
+          <div class="chart-panel">
+            <div class="histogram-wrapper">
+              <canvas ref="sharpeStdDistCanvas" class="histogram-canvas"></canvas>
+            </div>
+          </div>
+          
+          <div class="chart-panel">
+            <div class="histogram-wrapper">
+              <canvas ref="ruinDistCanvas" class="histogram-canvas"></canvas>
+            </div>
+          </div>
+          
+          <div class="chart-panel">
+            <div class="histogram-wrapper">
+              <canvas ref="successRateCanvas" class="histogram-canvas"></canvas>
             </div>
           </div>
         </div>

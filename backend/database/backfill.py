@@ -20,7 +20,7 @@ redis_client = redis.from_url(REDIS_URL)
 
 dataset = "GLBX.MDP3"
 # Single key: value is JSON array [{timestamp, open, high, low, close, volume}, ...]. One GET returns the full list.
-OHLCV_LIST_KEY = "ohlcv:ES:list"
+OHLCV_LIST_KEY = "ohlcv:NQ:list"
 
 # Same fixed-point scale as datafeed (prices from API are in 1e-9 units).
 PRICE_SCALE = 1_000_000_000
@@ -48,7 +48,7 @@ def backfill():
     data = client.timeseries.get_range(
         dataset=dataset,
         schema="ohlcv-1m",
-        symbols="ES.v.0",
+        symbols="NQ.v.0",
         stype_in="continuous",
         start=start_utc.strftime("%Y-%m-%d"),
         end=end_utc.strftime("%Y-%m-%dT%H:%M:%S"),

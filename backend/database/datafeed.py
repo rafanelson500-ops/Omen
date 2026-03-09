@@ -39,7 +39,7 @@ OHLCV_RETENTION_SECONDS = 12 * 30 * 24 * 3600  # 1 month
 
 dataset = "GLBX.MDP3"
 # Single key: value is JSON array [{timestamp, open, high, low, close, volume}, ...]. One GET returns the full list.
-OHLCV_LIST_KEY = "ohlcv:ES:list"
+OHLCV_LIST_KEY = "ohlcv:NQ:list"
 
 # Global state
 client = None
@@ -203,7 +203,7 @@ def connect_and_start():
                 client.subscribe(
                     dataset=dataset,
                     schema="ohlcv-1m",
-                    symbols="ES.v.0",
+                    symbols="NQ.v.0",
                     stype_in="continuous",
                 )
                 client.add_callback(handle_data)
