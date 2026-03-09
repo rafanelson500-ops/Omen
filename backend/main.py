@@ -60,8 +60,6 @@ def graph_notation(df):
     df["graph:1:grey"] = df["target"]
     df["graph:1:red"] = df["gbt_target"]
 
-    df["graph:3:yellow"] = df["signal"]
-
     df["graph:2:grey"] = df["base_cumulative"]
     df["graph:2:green"] = df["strategy_cumulative"]
     return df
