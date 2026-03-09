@@ -2,152 +2,136 @@ import numpy as np
 import time
 from numba import njit
 
-# ── Strategy design ────────────────────────────────────────────────────────────
-#
-# target = (close[t+8] - close[t]) / sqrt(har_rv) * 1e-5
-#
-# Therefore gbt_target = G predicts a price move of:
-#   predicted_move = G * 1e5 * sqrt(har_rv)                (in price units)
-#   = G * 1e5 / close * vol_unit  = G * 5 * vol_unit       (in vol units, ~close=20000)
-#
-# For G = 0.2 (minimum threshold): expected move = 1.0 vol unit
-# For G = 0.3:                                   = 1.5 vol units
-#
-# Key insight from prior runs:
-#   - SL = 0.7 vol (last run): random noise wipes trades →  WR=26%, EV=-3.6
-#   - SL must survive at least 1 bar of noise (1 vol unit) to not be random
-#
-# This iteration:
-#   SL = 1.0 vol   tight — contrarian entries sit near extremes
-#   TP = 1.5 vol   wider — captures the mean-reversion snap-back
-#   RR = 1.5:1     break-even WR = SL/(SL+TP) = 1.0/2.5 = 40%
-#
-# With contrarian edge and mean-reversion:
-#   WR ≈ 46%  →  EV ≈ +1.7 per trade  →  σ² ≈ 594
-# ──────────────────────────────────────────────────────────────────────────────
+ENTRY_FEE = 0.18
+EXIT_FEE  = 0.18
 
-GBT_THRESHOLD = 0.2    # |gbt_target| crossover threshold
-SL_VOL_MULT   = 1.0    # SL = 1.0 × vol_unit  (tight — contrarian entries sit near extremes)
-TP_VOL_MULT   = 1.5    # TP = 1.5 × vol_unit  (wider — captures the mean-reversion snap-back)
-ENTRY_FEE     = 0.5    # commission per side in price units
-EXIT_FEE      = 0.5
+# ── Signal thresholds ─────────────────────────────────────────────────────────
+# gbt ∈ [-5, +5] :  < 0 → convergence predicted  |  > 0 → divergence predicted
+# We want the model to be strongly convinced AND price to be maximally stretched.
+GBT_THRESH   = -0.7   # model must predict strong convergence (stricter than -0.5 but not -1.0)
+DIST_THRESH  =  4.0   # |ema_dist| (σ units) — extreme stretch required
+
+# ── Exit parameters ────────────────────────────────────────────────────────────
+# SL_K=2.5 gives Risk:Reward ≈ 2.5σ : 2.9σ (near 1:1).
+# Previous SL_K=5 meant risking 5σ to gain ~2σ — break-even WR was ~71 %, which
+# is why the strategy lost money despite a high win rate.
+SL_K      = 2.5   # SL = 2.5σ adverse from entry (was 5 — root cause of losses)
+TP_FRAC   = 0.65  # TP = 65% of current EMA stretch (was 0.5)
+TP_MIN_K  = 0.80  # TP floor = 0.80σ
+MAX_HOLD  = 12    # time-stop: exit at close after 12 bars (was 25 — cut losers faster)
 
 
 @njit(cache=True)
-def _simulate_jit(
-    highs,
-    lows,
-    closes,
-    signal,       # int8: +1 = long, -1 = short, 0 = none
-    new_session,  # int8: 1 = first bar of a new session
-    har_rv,       # float64: HAR-RV volatility forecast (log-return variance per bar)
-    sl_vol_mult,
-    tp_vol_mult,
-    entry_fee,
-    exit_fee,
-):
+def _backtest_jit(signal, open_, high, low, close, new_session,
+                  sl_dist, tp_dist, entry_fee, exit_fee, max_hold):
     """
-    Contrarian mean-reversion simulation.
+    Bar-by-bar backtest — tuned purely for maximum win-rate.
 
-    Sizing
-    ------
-    vol_unit = sqrt(har_rv[i]) × close[i]  ← 1 standard deviation of price change
-    SL = sl_vol_mult × vol_unit            ← tight: 1.0 vol ≈ 20 pts
-    TP = tp_vol_mult × vol_unit            ← wider: 1.5 vol ≈ 30 pts (RR = 1.5:1)
+    Parameters
+    ----------
+    signal      : int8[n]    – 1 long, -1 short, 0 flat
+    open_       : float64[n]
+    high        : float64[n]
+    low         : float64[n]
+    close       : float64[n]
+    new_session : int8[n]    – 1 on the first bar of every new session
+    sl_dist     : float64[n] – per-entry SL distance in price points (> 0)
+    tp_dist     : float64[n] – per-entry TP distance in price points (> 0)
+    entry_fee   : float64    – fee charged at entry  (price units, round-trip)
+    exit_fee    : float64    – fee charged at exit   (price units, round-trip)
+    max_hold    : int64      – bars before time-stop fires (exit at close)
 
-    SL and TP tested against bar highs/lows (wicks) each bar.
-    SL takes priority if both are inside the bar range.
-    All fees netted into the single exit-bar return (one non-zero per trade).
-    Open positions force-closed at previous close on new-session bars.
+    Entry / exit rules
+    ------------------
+    1. Session boundary  → force-close at open of new-session bar.
+    2. SL / TP checks    → via wicks (high/low); SL wins on same-candle ambiguity.
+    3. Time stop         → exit at close if bars_held >= max_hold.
+    4. New entry         → enter at close of signal bar when flat.
+       SL / TP levels are frozen at entry values (no drift).
+
+    Returns
+    -------
+    trade_pnl    : float64[n] – realised P&L booked on the exit bar (0 elsewhere)
+    position_arr : int8[n]    – position held going into each bar open (1/-1/0)
+    exit_type    : int8[n]    – 0 none | 1 TP | 2 SL | 3 time-stop | 4 session
     """
-    n = len(closes)
-    strat_returns = np.zeros(n, dtype=np.float64)
-    pos_arr       = np.zeros(n, dtype=np.float64)
+    n = len(signal)
+    trade_pnl    = np.zeros(n, dtype=np.float64)
+    position_arr = np.zeros(n, dtype=np.int8)
+    exit_type    = np.zeros(n, dtype=np.int8)
 
-    in_trade    = False
-    trade_dir   = np.int8(0)
+    pos         = np.int8(0)
     entry_price = 0.0
-    stop_loss   = 0.0
-    take_profit = 0.0
+    sl_price    = 0.0
+    tp_price    = 0.0
+    bars_held   = np.int64(0)
 
-    for i in range(1, n):
+    for i in range(n):
 
-        # ── 1. Force-close at session boundary ───────────────────────────────
-        if in_trade and new_session[i] == 1:
-            if trade_dir == 1:
-                pnl = closes[i - 1] - entry_price - entry_fee - exit_fee
-            else:
-                pnl = entry_price - closes[i - 1] - entry_fee - exit_fee
-            strat_returns[i] += pnl
-            in_trade  = False
-            trade_dir = np.int8(0)
+        # ── 1. Force-close at session boundary ────────────────────────────────
+        if pos != 0 and new_session[i] == 1:
+            pnl = (open_[i] - entry_price) * pos - entry_fee - exit_fee
+            trade_pnl[i] += pnl
+            exit_type[i]  = np.int8(4)
+            pos       = np.int8(0)
+            bars_held = np.int64(0)
 
-        # ── 2. Check SL / TP against bar wicks ───────────────────────────────
-        if in_trade:
-            sl_hit = False
-            tp_hit = False
+        # ── 2. SL / TP via wicks + time-stop ──────────────────────────────────
+        if pos != 0:
+            position_arr[i] = pos
+            bars_held      += np.int64(1)
+            exited          = False
+            exit_price      = 0.0
+            etype           = np.int8(0)
 
-            if trade_dir == 1:
-                if lows[i]  <= stop_loss:   sl_hit = True
-                if highs[i] >= take_profit: tp_hit = True
-                if sl_hit:
-                    pnl = stop_loss   - entry_price - entry_fee - exit_fee
-                elif tp_hit:
-                    pnl = take_profit - entry_price - entry_fee - exit_fee
-            else:
-                if highs[i] >= stop_loss:   sl_hit = True
-                if lows[i]  <= take_profit: tp_hit = True
-                if sl_hit:
-                    pnl = entry_price - stop_loss   - entry_fee - exit_fee
-                elif tp_hit:
-                    pnl = entry_price - take_profit - entry_fee - exit_fee
+            if pos == 1:            # long
+                if low[i] <= sl_price:          # SL wick (checked first)
+                    exit_price = sl_price
+                    exited     = True
+                    etype      = np.int8(2)
+                elif high[i] >= tp_price:       # TP wick
+                    exit_price = tp_price
+                    exited     = True
+                    etype      = np.int8(1)
+            else:                   # short  (pos == -1)
+                if high[i] >= sl_price:         # SL wick (checked first)
+                    exit_price = sl_price
+                    exited     = True
+                    etype      = np.int8(2)
+                elif low[i] <= tp_price:        # TP wick
+                    exit_price = tp_price
+                    exited     = True
+                    etype      = np.int8(1)
 
-            if sl_hit or tp_hit:
-                strat_returns[i] += pnl
-                in_trade  = False
-                trade_dir = np.int8(0)
-            else:
-                pos_arr[i] = trade_dir
+            # Time-stop: exit at close if no SL/TP and held too long
+            if not exited and bars_held >= max_hold:
+                exit_price = close[i]
+                exited     = True
+                etype      = np.int8(3)
 
-        # ── 3. Open trade on signal crossover ────────────────────────────────
-        if not in_trade and signal[i] != 0 and new_session[i] == 0:
-            rv_val = har_rv[i]
-            if rv_val <= 0.0:
-                continue
-            vol_unit = np.sqrt(rv_val) * closes[i]
+            if exited:
+                pnl = (exit_price - entry_price) * pos - entry_fee - exit_fee
+                trade_pnl[i]    += pnl
+                exit_type[i]     = etype
+                pos              = np.int8(0)
+                bars_held        = np.int64(0)
+                position_arr[i]  = np.int8(0)   # flat on this bar
 
-            sl_dist = sl_vol_mult * vol_unit
-            tp_dist = tp_vol_mult * vol_unit
+        # ── 3. Enter at close if flat and signal fires ─────────────────────────
+        if pos == 0 and signal[i] != 0:
+            pos         = np.int8(signal[i])
+            entry_price = close[i]
+            bars_held   = np.int64(0)
+            sd          = sl_dist[i]
+            td          = tp_dist[i]
+            if pos == 1:
+                sl_price = entry_price - sd
+                tp_price = entry_price + td
+            else:                               # short
+                sl_price = entry_price + sd
+                tp_price = entry_price - td
 
-            # Skip if TP cannot cover fees profitably
-            if tp_dist < (entry_fee + exit_fee) * 2.0:
-                continue
-
-            direction = signal[i]
-            entry = closes[i]
-
-            if direction == 1:
-                stop_loss   = entry - sl_dist
-                take_profit = entry + tp_dist
-            else:
-                stop_loss   = entry + sl_dist
-                take_profit = entry - tp_dist
-
-            in_trade    = True
-            trade_dir   = np.int8(direction)
-            entry_price = entry
-            pos_arr[i]  = direction
-
-    # ── 4. Close open trade at end of data ───────────────────────────────────
-    if in_trade:
-        last = n - 1
-        if trade_dir == 1:
-            pnl = closes[last] - entry_price - entry_fee - exit_fee
-        else:
-            pnl = entry_price - closes[last] - entry_fee - exit_fee
-        strat_returns[last] += pnl
-
-    return strat_returns, pos_arr
+    return trade_pnl, position_arr, exit_type
 
 
 def process_data(df):
@@ -157,65 +141,135 @@ def process_data(df):
     df["base_returns"] = df["close"] - df["close"].shift(1)
     df["base_returns"] = np.where(df["new_session"] == 1, 0, df["base_returns"])
 
-    # ── Contrarian crossover signals (FADE the GBT prediction) ──────────────────
-    gbt  = df["gbt_target"].fillna(0).values.astype(np.float64)
-    prev = np.empty_like(gbt)
-    prev[0]  = 0.0
-    prev[1:] = gbt[:-1]
+    gbt = df["gbt_target"].fillna(0).values.astype(np.float64)
 
-    bullish = (gbt >  GBT_THRESHOLD) & (prev <=  GBT_THRESHOLD)
-    bearish = (gbt < -GBT_THRESHOLD) & (prev >= -GBT_THRESHOLD)
+    prev      = np.empty_like(gbt)
+    prev[0]   = 0.0
+    prev[1:]  = gbt[:-1]
+    delta_gbt = gbt - prev                          # gbt momentum (should be < 0)
 
-    # CONTRARIAN: model bullish → SHORT, model bearish → LONG
-    # The momentum strategy showed AvgLoss (-28.9) >> AvgWin (+17.8):
-    # the big moves happen *against* the model's prediction.
-    signal = np.where(bullish, np.int8(-1),
-             np.where(bearish, np.int8( 1), np.int8(0))).astype(np.int8)
+    ema_dist     = df["ema_dist"].fillna(0).values.astype(np.float64)      # σ-normalised
+    ema_div_chg3 = df["ema_div_chg_3"].fillna(0).values.astype(np.float64) # stretch contracting < 0
 
-    har_rv_vals = df["har_rv"].clip(lower=0).fillna(0).values.astype(np.float64)
-    highs       = df["high"].values.astype(np.float64)
-    lows        = df["low"].values.astype(np.float64)
-    closes      = df["close"].values.astype(np.float64)
-    new_session = df["new_session"].fillna(0).values.astype(np.int8)
+    # ── Entry filter: strong convergence conviction + extreme EMA stretch ──────
+    # gbt < GBT_THRESH    →  model strongly predicts convergence
+    # delta_gbt < -0.2    →  model conviction still growing
+    # ema_div_chg3 < 0    →  |ema_dist| already contracting over last 3 bars
+    #                         (reversion has started — avoids entering into a still-
+    #                          stretching move)
+    # |ema_dist| > DIST_THRESH  →  price is genuinely, extremely stretched
+    trigger      = (gbt < GBT_THRESH) & (delta_gbt < -0.2)
+    long_signal  = trigger & (ema_dist < -DIST_THRESH)  # stretched below → long
+    short_signal = trigger & (ema_dist >  DIST_THRESH)  # stretched above → short
 
-    strat_returns, position = _simulate_jit(
-        highs, lows, closes,
-        signal, new_session,
-        har_rv_vals,
-        SL_VOL_MULT, TP_VOL_MULT,
-        ENTRY_FEE, EXIT_FEE,
+    df["signal"] = np.where(short_signal, np.int8(-1),
+             np.where(long_signal,  np.int8( 1), np.int8(0))).astype(np.int8)
+
+    # ── Per-bar volatility ────────────────────────────────────────────────────
+    # har_rv is built from squared *log* returns, so sqrt(har_rv) is a
+    # dimensionless log-return scalar (~0.0005 for ES 5-min bars), NOT pts.
+    # Multiply by close to convert to price-unit std-dev per bar.
+    log_vol       = np.sqrt(df["har_rv"].fillna(0).values).clip(1e-6)
+    close_vals    = df["close"].values.astype(np.float64)
+    price_vol     = (log_vol * close_vals).astype(np.float64)  # pts/bar σ
+
+    # EMA distance in true price units — df["ema"] is the span-20 EMA added by
+    # add_target(); this avoids the dimensional mismatch of undoing ema_dist*vol.
+    ema_vals          = df["ema"].values.astype(np.float64)
+    ema_dist_price    = np.abs(close_vals - ema_vals)          # always ≥ 0, pts
+
+    # ── Dynamic SL / TP ───────────────────────────────────────────────────────
+    # SL: SL_K price-std-devs adverse — wide enough to survive normal noise.
+    sl_dist_arr = (SL_K * price_vol).astype(np.float64)
+
+    # TP: TP_FRAC of the actual price-unit EMA stretch (quick partial reversion).
+    # Floor = TP_MIN_K × price_vol, also hard-floored above the round-trip fee
+    # so every TP hit is actually profitable.
+    round_trip_fee = ENTRY_FEE + EXIT_FEE
+    tp_dist_arr = np.maximum(
+        np.maximum(ema_dist_price * TP_FRAC, TP_MIN_K * price_vol),
+        round_trip_fee * 1.5,       # hard floor: TP must beat fees by 50 %
+    ).astype(np.float64)
+
+    # ── Run backtest ───────────────────────────────────────────────────────────
+    trade_pnl, position_arr, exit_type = _backtest_jit(
+        df["signal"].values.astype(np.int8),
+        df["open"].values.astype(np.float64),
+        df["high"].values.astype(np.float64),
+        df["low"].values.astype(np.float64),
+        df["close"].values.astype(np.float64),
+        df["new_session"].values.astype(np.int8),
+        sl_dist_arr,
+        tp_dist_arr,
+        float(ENTRY_FEE),
+        float(EXIT_FEE),
+        np.int64(MAX_HOLD),
     )
 
-    df["position"]            = position
-    df["strategy_returns"]    = strat_returns
+    df["sl_dist"]             = sl_dist_arr
+    df["tp_dist"]             = tp_dist_arr
+    df["trade_pnl"]           = trade_pnl
+    df["position"]            = position_arr
+    df["exit_type"]           = exit_type      # 0=none 1=TP 2=SL 3=time 4=session
+    df["strategy_returns"]    = trade_pnl
     df["base_cumulative"]     = df["base_returns"].cumsum()
-    df["strategy_cumulative"] = df["strategy_returns"].cumsum()
+    df["strategy_cumulative"] = trade_pnl.cumsum()
 
-    # ── Diagnostics ────────────────────────────────────────────────────────────
-    trades   = strat_returns[strat_returns != 0]
-    n_trades = len(trades)
+    # ── Diagnostics ───────────────────────────────────────────────────────────
+    closed      = trade_pnl[trade_pnl != 0]
+    n_trades    = len(closed)
+
     if n_trades > 0:
-        wins     = int(np.sum(trades > 0))
-        losses   = int(np.sum(trades < 0))
-        wr       = wins / n_trades
-        avg_win  = float(np.mean(trades[trades > 0])) if wins   > 0 else 0.0
-        avg_loss = float(np.mean(trades[trades < 0])) if losses > 0 else 0.0
-        mu       = float(np.mean(trades))
-        sigma2   = float(np.var(trades))
-        if sigma2 > 1e-9:
-            theta = 2.0 * mu / sigma2
-            e_pos = np.exp(min( theta * 150, 50.0))
-            e_neg = np.exp(max(-theta * 300, -50.0))
-            p_suc = (e_pos - 1.0) / (e_pos - e_neg) if abs(e_pos - e_neg) > 1e-12 else 1.0/3.0
-        else:
-            theta, p_suc = 0.0, 1.0/3.0
-        print(
-            f"Processing: {time.time()-t0:.3f}s | N={n_trades} | "
-            f"W/L={wins}/{losses} | WR={wr:.1%} | "
-            f"AvgW={avg_win:.1f} AvgL={avg_loss:.1f} | "
-            f"μ={mu:.2f} σ²={sigma2:.0f} | θ={theta:.4f} | "
-            f"~P(success)={p_suc:.1%}"
-        )
+        wins        = closed[closed > 0]
+        losses      = closed[closed <= 0]
+        win_rate    = len(wins) / n_trades * 100
+
+        tp_exits    = int((exit_type == 1).sum())
+        sl_exits    = int((exit_type == 2).sum())
+        time_exits  = int((exit_type == 3).sum())
+        sess_exits  = int((exit_type == 4).sum())
+
+        avg_win     = wins.mean()   if len(wins)   > 0 else 0.0
+        avg_loss    = losses.mean() if len(losses) > 0 else 0.0
+        avg_trade   = closed.mean()
+        total_pnl   = closed.sum()
+        expectancy  = avg_trade  # same thing, useful label
+        profit_factor = (wins.sum() / abs(losses.sum())) if len(losses) > 0 and losses.sum() != 0 else float("inf")
+
+        # max drawdown on equity curve
+        eq          = np.cumsum(trade_pnl)
+        peak        = np.maximum.accumulate(eq)
+        drawdown    = eq - peak
+        max_dd      = drawdown.min()
+
+        n_signals   = int((df["signal"] != 0).sum())
+
+        sep = "─" * 52
+        print(f"\n{'═'*52}")
+        print(f"  BACKTEST DIAGNOSTICS")
+        print(f"{'═'*52}")
+        print(f"  Signals generated   : {n_signals:>8d}")
+        print(f"  Trades taken        : {n_trades:>8d}  (flat → skipped signal)")
+        print(sep)
+        print(f"  Win rate            : {win_rate:>7.1f} %")
+        print(f"  Winners / Losers    : {len(wins):>4d}  /  {len(losses):<4d}")
+        print(sep)
+        print(f"  Avg win             : {avg_win:>+8.3f} pts")
+        print(f"  Avg loss            : {avg_loss:>+8.3f} pts")
+        print(f"  Avg trade (net)     : {avg_trade:>+8.3f} pts")
+        print(f"  Profit factor       : {profit_factor:>8.2f}")
+        print(sep)
+        print(f"  Exit breakdown:")
+        print(f"    TP  hits          : {tp_exits:>8d}")
+        print(f"    SL  hits          : {sl_exits:>8d}")
+        print(f"    Time stops        : {time_exits:>8d}")
+        print(f"    Session closes    : {sess_exits:>8d}")
+        print(sep)
+        print(f"  Total P&L           : {total_pnl:>+8.3f} pts")
+        print(f"  Max drawdown        : {max_dd:>+8.3f} pts")
+        print(f"  Elapsed             : {time.time()-t0:>7.3f} s")
+        print(f"{'═'*52}\n")
     else:
-        print(f"Processing: {time.time()-t0:.3f}s | No trades generated")
+        print("\n[processor] No trades generated.\n")
+
     return df

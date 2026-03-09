@@ -15,7 +15,7 @@ app = flask.Flask(__name__)
 CORS(app)
 
 hmm_features = ["efficiency_ratio_6", "efficiency_ratio_12", "efficiency_ratio_24", "rv_short_med_ratio", "mean_deviation", "vol_expansion", "hurst"]
-gbt_features = ["hmm_state", "ret_1", "ret_3", "ret_6", "mean_deviation", "ema_dist", "vol_ratio_fast", "vol_ratio_slow", "range_pos", "vwap_dist", "vwap_slope"]
+gbt_features = ["hmm_state", "ema_dist", "ema_dist_abs", "ema_div_chg_3", "ema_div_chg_6", "ret_ema_align", "ema_slope", "ema_slope_chg", "ema_dist_zscore", "vol_ratio_fast", "vol_ratio_slow", "vwap_dist", "range_pos"]
 sequence_length = 16
 train_size = 0.6  # Match training split
 validation_size = 0.2
@@ -55,8 +55,12 @@ def create_sequences(data, features, exclude_last_n=0):
     return np.array(X_sequences), valid_indices
 
 def graph_notation(df):
+    df["graph:0:red"] = df["ema"]
+
     df["graph:1:grey"] = df["target"]
     df["graph:1:red"] = df["gbt_target"]
+
+    df["graph:3:yellow"] = df["signal"]
 
     df["graph:2:grey"] = df["base_cumulative"]
     df["graph:2:green"] = df["strategy_cumulative"]

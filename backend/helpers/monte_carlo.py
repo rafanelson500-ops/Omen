@@ -3,8 +3,10 @@ import pandas as pd
 from numba import jit
 import time
 
-ruin_threshold = -150
-success_threshold = 300
+micros = 10
+
+ruin_threshold = -400 / micros
+success_threshold = 600 / micros
 
 @jit(nopython=True)
 def calculate_max_drawdown(cumulative_returns):

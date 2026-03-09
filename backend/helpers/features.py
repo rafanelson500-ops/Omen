@@ -52,34 +52,68 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         np.where(df["new_session"] == 1, 0, log_ret),
         index=df.index
     )
-    df["ret_1"] = log_ret
-    df["ret_3"] = log_ret.rolling(3).sum()
-    df["ret_6"] = log_ret.rolling(6).sum()
 
-    df["ema_dist"] = (df["close"] - df["close"].ewm(span=20).mean()) / vol
+    # ── GBT features (target-aligned: EMA divergence / convergence) ──────────────
+    # target = (|close[t+6] - ema[t+6]| - |close[t] - ema[t]|) / sqrt(har_rv)
+    # Positive → price diverges further from EMA (momentum/trend continuation).
+    # Negative → price reverts toward EMA (mean-reversion snap-back).
+    # Features are designed to quantify: current EMA stretch, its rate of change,
+    # return alignment with that stretch, vol regime, and session/range anchors.
 
-    df["vol_ratio_fast"] = df["rv_short"] / df["rv_medium"]
-    df["vol_ratio_slow"] = df["rv_medium"] / df["rv_long"]
+    ema          = df["close"].ewm(span=20).mean()   # same EMA as target
+    ema_dist_raw = df["close"] - ema                 # signed deviation, price units
 
-    lookback = 20
+    # 1. Signed EMA distance (vol-normalised) — direction + magnitude of stretch
+    df["ema_dist"]     = (ema_dist_raw / vol).clip(-8, 8)
 
-    df["range_pos"] = (
-        (df["close"] - df["low"].rolling(lookback).min())
-        / (df["high"].rolling(lookback).max() - df["low"].rolling(lookback).min())
-    )
+    # 2. Unsigned EMA distance — primary driver of mean-reversion pull;
+    #    large |d| raises probability that target < 0
+    df["ema_dist_abs"] = df["ema_dist"].abs()
 
+    # 3. EMA divergence rate of change — are we currently stretching (+) or compressing (-)?
+    df["ema_div_chg_3"] = df["ema_dist_abs"] - df["ema_dist_abs"].shift(3)
+    df["ema_div_chg_6"] = df["ema_dist_abs"] - df["ema_dist_abs"].shift(6)
+
+    # 4. Return–EMA alignment — positive = recent returns moving *away* from EMA
+    #    (divergence momentum); negative = moving *toward* EMA (convergence pressure)
+    df["ret_ema_align"] = (
+        (np.sign(ema_dist_raw) * log_ret.rolling(3).sum()) / vol
+    ).clip(-5, 5)
+
+    # 5. EMA slope and curvature (same span and horizon h=6 as target EMA)
+    #    A fast-moving EMA narrows the pull-back window; curvature signals inflections
+    df["ema_slope"]     = ema.diff(3) / vol
+    df["ema_slope_chg"] = ema.diff(3).diff(3) / vol
+
+    # 6. EMA deviation z-score vs rolling history — how extreme is the current stretch
+    #    relative to recent norms? (high z-score → heightened reversion probability)
+    d_roll_mean = df["ema_dist_abs"].rolling(48, min_periods=10).mean()
+    d_roll_std  = df["ema_dist_abs"].rolling(48, min_periods=10).std().clip(lower=1e-6)
+    df["ema_dist_zscore"] = (df["ema_dist_abs"] - d_roll_mean) / d_roll_std
+
+    # 7. Vol regime (log ratios — symmetric around 0; expanding vol sustains divergence)
+    df["vol_ratio_fast"] = np.log((df["rv_short"]  + 1e-10) / (df["rv_medium"] + 1e-10))
+    df["vol_ratio_slow"] = np.log((df["rv_medium"] + 1e-10) / (df["rv_long"]   + 1e-10))
+
+    # 8. VWAP deviation — session-level anchor independent of EMA; captures intraday drift
     df["vwap_dist"] = (df["close"] - df["session_vwap"]) / vol
 
-    df["vwap_slope"] = df["session_vwap"].diff(5) / vol
+    # 9. Range position (centred around 0) — ±0.5 = near high/low; signals extreme stretch
+    lookback = 20
+    rng = (
+        df["high"].rolling(lookback).max() - df["low"].rolling(lookback).min()
+    ).clip(lower=1e-6)
+    df["range_pos"] = (df["close"] - df["low"].rolling(lookback).min()) / rng - 0.5
 
     print(f"Features computed in {time.time() - start_time:.3f}s")
 
     return df
 
 def add_target(df):
-    h = 8
+    h = 6
+    ema = df["close"].ewm(span=20).mean()
+    df["ema"] = ema
     df["target"] = (
-        (df["close"].shift(-h) - df["close"])
-        / np.sqrt(df["har_rv"]) * 1e-5
-    ).clip(-1,1)
+        (abs(df["close"].shift(-h) - ema.shift(-h)) - abs(df["close"] - ema)) / np.sqrt(df["har_rv"])*1e-4
+    ).clip(-5,5)
     return df
