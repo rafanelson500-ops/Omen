@@ -82,7 +82,7 @@ def start(cb):
     client.subscribe(
         dataset=dataset,
         schema="trades",
-        symbols="ES.v.0",
+        symbols="NQ.v.0",
         stype_in="continuous",
     )
     client.add_callback(handle_data)
