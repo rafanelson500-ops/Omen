@@ -1,3 +1,10 @@
+"""
+This script is used to backfill the database with historical data for testing.
+
+It should request tick data for the specified session (NYSE Open)
+then aggregate it into 1s candles and store it in a csv file.
+"""
+
 import json
 import os
 from datetime import datetime, timedelta
