@@ -24,7 +24,11 @@ Entry Criteria:
 import time
 from typing import Literal, TypedDict
 from database.datafeed import start as start_datafeed
+from flask import Flask, request, jsonify
+from flask_socketio import SocketIO
 
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 class States(TypedDict):
     tpo_bias: Literal["bullish", "bearish", "neutral"]
@@ -43,6 +47,7 @@ states: States = {
 
 # Fires everytime a 1s candle is completed.
 def handle_candle(candle):
+    socketio.emit("candle", candle)
     print(candle)
 
 # Initialize the pipeline
@@ -52,11 +57,4 @@ def main():
 if __name__ == "__main__":
     print("Starting pipeline")
     main()
-    try:
-        print("Running pipeline")
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Keyboard interrupt")
-    finally:
-        print("Pipeline stopped")
+    socketio.run(app, host="0.0.0.0", port=8000)

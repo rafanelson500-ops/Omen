@@ -1,366 +1,203 @@
 <script setup lang="ts">
-import { onMounted, ref, onUnmounted } from 'vue'
-import { createChart } from 'lightweight-charts'
-import { CandlestickSeries, LineSeries, type CandlestickData, type LineData, type Time } from 'lightweight-charts'
-import { chartOptions } from './chartOptions'
-import { addHmmStateRectangles } from './helpers/hmmStateRectangles'
-import MonteCarloSimulation from './components/MonteCarloSimulation.vue'
-
-const chartContainer = ref<HTMLDivElement | null>(null)
-const chartData = ref<any[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
-const monteCarloComponent = ref<InstanceType<typeof MonteCarloSimulation> | null>(null)
+import { onMounted, onUnmounted, ref } from 'vue'
+import { io, Socket } from 'socket.io-client'
+import type { IChartApi, ISeriesApi } from 'lightweight-charts'
+import { createChart, CandlestickSeries } from 'lightweight-charts'
+import { chartOptions, candlestickSeriesOptions, chartTheme } from './chartOptions'
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
   url = 'http://play.nukesmp.com:8000'
 }
 
-const fetchData = async () => {
-  try {
-    loading.value = true
-    error.value = null
-    const response = await fetch(url+'/data')
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    const data = await response.json()
-    chartData.value = data
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to fetch data'
-    console.error('Error fetching data:', err)
-  } finally {
-    loading.value = false
+const socket = ref<Socket>()
+const chartContainer = ref<HTMLDivElement | null>(null)
+const chart = ref<IChartApi>()
+const candles = ref<ISeriesApi<'Candlestick'>>()
+const connected = ref(false)
+
+let resizeObserver: ResizeObserver | null = null
+
+const formatCandle = (candle: any) => {
+  return {
+    time: candle.timestamp,
+    open: candle.open * 1e-9,
+    high: candle.high * 1e-9,
+    low: candle.low * 1e-9,
+    close: candle.close * 1e-9,
   }
 }
 
-const cleanSeries = (data: any[], map: Record<string, [string, number]>): any[] => {
-    return data.map((item) => {
-        const newItem: Record<string, any> = {}
-        for (const new_key of Object.keys(map)) {
-            const [src, scale] = map[new_key]!
-            newItem[new_key] = item[src as keyof typeof item] * scale
-        }
-        return newItem as any
-    })
-}
+onMounted(() => {
+  if (!chartContainer.value) return
 
-let chart: ReturnType<typeof createChart> | null = null
+  // Create chart
+  chart.value = createChart(chartContainer.value, {
+    ...chartOptions,
+    width: chartContainer.value.clientWidth,
+    height: chartContainer.value.clientHeight,
+  })
 
-const resizeHandler = () => {
-  if (chart && chartContainer.value) {
-    chart.applyOptions({ 
-      width: chartContainer.value.clientWidth,
-      height: chartContainer.value.clientHeight 
-    })
-  }
-}
+  candles.value = chart.value.addSeries(CandlestickSeries, candlestickSeriesOptions)
 
-onMounted(async () => {
-  await fetchData()
-  if (chartContainer.value && chartData.value.length > 0) {
-    // Use chartOptions for styling
-    chart = createChart(chartContainer.value, {
-      ...chartOptions,
-      width: chartContainer.value.clientWidth,
-      height: chartContainer.value.clientHeight,
-      autoSize: true,
-    })
-    
-    const priceSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-    })
-    
-    priceSeries.setData(cleanSeries(chartData.value, {
-      time: ['time', 1/1000],
-      open: ['open', 1],
-      high: ['high', 1],
-      low: ['low', 1],
-      close: ['close', 1],
-    }) as CandlestickData<Time>[])
-    
-    // Add HMM state rectangles as highlighted boxes
-    if (chartData.value.length > 0 && chartData.value[0].hmm_state !== undefined) {
-      addHmmStateRectangles(priceSeries, chartData.value)
+  // Keep chart sized to container
+  resizeObserver = new ResizeObserver(() => {
+    if (chartContainer.value && chart.value) {
+      chart.value.resize(
+        chartContainer.value.clientWidth,
+        chartContainer.value.clientHeight
+      )
     }
-    
-    if (chartData.value.length > 0) {
-      const columns = Object.keys(chartData.value[0]).filter(key => key.startsWith('graph:'))
-      for (const column of columns) {
-        const args = column.split(':')
-        if (args.length >= 3) {
-          const [_, pane, color] = args
-          const paneNum = parseInt(pane as string)
-          if (!isNaN(paneNum) && pane !== undefined) {
-            const seriesColor: string = color || "#aaaaaa"
-            const series = chart.addSeries(LineSeries, { 
-              color: seriesColor, 
-              lineWidth: 1,
-              priceLineVisible: false,
-              lastValueVisible: true,
-            }, paneNum)
-            series.setData(cleanSeries(chartData.value, {
-              time: ['time', 1/1000],
-              value: [column, 1],
-            }) as LineData<Time>[])
-          }
-        }
-      }
-    }
-    
-    window.addEventListener('resize', resizeHandler)
-  }
+  })
+  resizeObserver.observe(chartContainer.value)
+
+  // Connect socket
+  socket.value = io(url)
+
+  socket.value.on('connect', () => { connected.value = true })
+  socket.value.on('disconnect', () => { connected.value = false })
+
+  socket.value.on('candle', (candle: any) => {
+    console.log(candle)
+    candles.value?.update(formatCandle(candle))
+  })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', resizeHandler)
-  if (chart) {
-    chart.remove()
-  }
+  resizeObserver?.disconnect()
+  socket.value?.disconnect()
+  chart.value?.remove()
 })
-
-const openMonteCarloDialog = () => {
-  monteCarloComponent.value?.openDialog()
-}
 </script>
 
 <template>
-  <div class="app-container">
-    <header class="app-header">
-      <h1 class="app-title">Trading Dashboard</h1>
-      <div class="header-actions">
-        <button @click="openMonteCarloDialog" class="monte-carlo-btn">
-          Run Monte Carlo
-        </button>
+  <div class="page">
+    <header class="header">
+      <div class="header-left">
+        <span class="logo">🧀 Cheese Trading</span>
+        <span class="timeframe">1s</span>
+      </div>
+      <div class="status" :class="connected ? 'status--live' : 'status--off'">
+        <span class="status-dot" />
+        {{ connected ? 'LIVE' : 'DISCONNECTED' }}
       </div>
     </header>
-    
-    <main class="app-main">
-      <div v-if="error" class="error-message">
-        <p>⚠️ {{ error }}</p>
-        <button @click="fetchData" class="retry-btn">Retry</button>
-      </div>
-      
-      <div v-else-if="loading" class="loading-container">
-        <div class="spinner"></div>
-        <p>Loading chart data...</p>
-      </div>
-      
-      <div v-else class="chart-wrapper">
-        <div ref="chartContainer" class="chart-container"></div>
-      </div>
-      
-      <!-- Monte Carlo Component -->
-      <MonteCarloSimulation ref="monteCarloComponent" :api-url="url" @close="() => {}" />
+
+    <main class="main">
+      <div ref="chartContainer" class="chart-container" />
     </main>
   </div>
 </template>
 
 <style scoped>
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
-}
-
-.app-container {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #0f172a 0%, #1a2332 100%);
-  color: #e2e8f0;
-  font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  display: flex;
-  flex-direction: column;
-}
-
-.app-header {
-  background: rgba(26, 35, 50, 0.8);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
-  padding: 1.5rem 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-.app-title {
   margin: 0;
-  font-size: 1.75rem;
-  font-weight: 600;
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.02em;
+  padding: 0;
 }
 
-.header-actions {
-  display: flex;
-  gap: 1rem;
-}
-
-.monte-carlo-btn {
-  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-  color: white;
-  border: none;
-  padding: 0.625rem 1.25rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);
-}
-
-.monte-carlo-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.4);
-}
-
-.monte-carlo-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-
-.refresh-btn {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  color: white;
-  border: none;
-  padding: 0.625rem 1.25rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
-}
-
-.refresh-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
-}
-
-.refresh-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.app-main {
-  flex: 1;
-  padding: 2rem;
+.page {
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: #0f1923;
+  color: #e2e8f0;
+  font-family: 'Outfit', system-ui, sans-serif;
   overflow: hidden;
 }
 
-.error-message {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 0.75rem;
-  padding: 1.5rem;
-  text-align: center;
-  color: #fca5a5;
-}
-
-.retry-btn {
-  margin-top: 1rem;
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  font-weight: 500;
-  transition: background 0.2s ease;
-}
-
-.retry-btn:hover {
-  background: #dc2626;
-}
-
-.loading-container {
+/* ── Header ── */
+.header {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  flex: 1;
-  color: #94a3b8;
-}
-
-.spinner {
-  width: 48px;
+  justify-content: space-between;
+  padding: 0 20px;
   height: 48px;
-  border: 4px solid rgba(148, 163, 184, 0.2);
-  border-top-color: #fbbf24;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.chart-wrapper {
-  flex: 1;
   background: #1a2332;
-  border-radius: 1rem;
-  overflow: hidden;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  flex-shrink: 0;
+}
+
+.header-left {
   display: flex;
-  min-height: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fbbf24;
+}
+
+.timeframe {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  letter-spacing: 0.05em;
+}
+
+/* ── Status badge ── */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+.status--live {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+.status--off {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status--off .status-dot {
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* ── Chart ── */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px;
 }
 
 .chart-container {
+  flex: 1;
   width: 100%;
   height: 100%;
-  min-height: 600px;
-}
-
-/* Responsive design */
-@media (max-width: 768px) {
-  .app-header {
-    padding: 1rem;
-    flex-direction: column;
-    gap: 1rem;
-    align-items: flex-start;
-  }
-
-  .app-title {
-    font-size: 1.5rem;
-  }
-
-  .app-main {
-    padding: 1rem;
-  }
-
-  .chart-container {
-    min-height: 400px;
-  }
-}
-
-/* Smooth transitions */
-.chart-wrapper {
-  transition: box-shadow 0.3s ease;
-}
-
-.chart-wrapper:hover {
-  box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.4), 0 15px 15px -5px rgba(0, 0, 0, 0.3);
-}
-
-@media (max-width: 768px) {
-  .chart-container {
-    min-height: 400px;
-  }
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.15);
 }
 </style>

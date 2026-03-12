@@ -1,6 +1,6 @@
 import { ColorType, CrosshairMode } from "lightweight-charts"
 
-const chartTheme = {
+export const chartTheme = {
     bg: '#1a2332',
     text: '#e2e8f0',
     muted: '#94a3b8',
@@ -9,6 +9,15 @@ const chartTheme = {
     down: '#ef4444',
     accent: '#fbbf24',
   }
+
+export const candlestickSeriesOptions = {
+  upColor: chartTheme.up,
+  downColor: chartTheme.down,
+  borderUpColor: chartTheme.up,
+  borderDownColor: chartTheme.down,
+  wickUpColor: chartTheme.up,
+  wickDownColor: chartTheme.down,
+}
 
 export const chartOptions = {
     layout: {
