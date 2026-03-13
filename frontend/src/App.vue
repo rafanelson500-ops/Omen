@@ -16,6 +16,13 @@ const chart = ref<IChartApi>()
 const candles = ref<ISeriesApi<'Candlestick'>>()
 const connected = ref(false)
 
+type States = {
+  absorption: number
+}
+const states = ref<States>({
+  absorption: 0.0,
+})
+
 let resizeObserver: ResizeObserver | null = null
 
 const formatCandle = (candle: any) => {
@@ -26,6 +33,10 @@ const formatCandle = (candle: any) => {
     low: candle.low * 1e-9,
     close: candle.close * 1e-9,
   }
+}
+
+const handleUpdate = (candle: any) => {
+  candles.value?.update(formatCandle(candle))
 }
 
 onMounted(() => {
@@ -58,10 +69,11 @@ onMounted(() => {
   socket.value.on('disconnect', () => { connected.value = false })
 
   socket.value.on('candle', (candle: any) => {
-    candles.value?.update(formatCandle(candle))
+    handleUpdate(candle)
+    console.log(candle)
   })
   socket.value.on('update_candle', (candle: any) => {
-    candles.value?.update(formatCandle(candle))
+    handleUpdate(candle)
   })
 })
 

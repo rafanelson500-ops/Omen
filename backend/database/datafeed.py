@@ -20,14 +20,16 @@ trigger_callback = lambda: ()
 update_callback = lambda: ()
 
 candles = deque()
-current_candle = {
+default_candle = {
     "timestamp": None,
     "open": None,
     "high": None,
     "low": None,
     "close": None,
-    "price_levels": {}
+    "price_levels": {},
+    "absorption": 0.0,
 }
+current_candle = default_candle.copy()
 last_tick_time = 0
 _lock = threading.Lock()
 
@@ -37,17 +39,22 @@ def _snapshot_candle(candle):
     return {**candle, "price_levels": dict(candle["price_levels"])}
 
 
+def _calc_absorption(price_levels: dict) -> float:
+    """I = (buy - sell) / (buy + sell) for the completed candle."""
+    buy  = sum(v[0] for v in price_levels.values())
+    sell = sum(v[1] for v in price_levels.values())
+    total = buy + sell
+    return (buy - sell) / total if total else 0.0
+
+
 def reset_candle(tick_ts, new_open):
+    global current_candle
     """Archive the completed candle and initialise a fresh one."""
     sc = _snapshot_candle(current_candle)
+    sc["absorption"] = _calc_absorption(sc["price_levels"])
     candles.append(sc)
     trigger_callback(sc)
-    current_candle["timestamp"] = tick_ts
-    current_candle["open"] = new_open
-    current_candle["high"] = new_open
-    current_candle["low"] = new_open
-    current_candle["close"] = new_open
-    current_candle["price_levels"] = {}
+    current_candle = default_candle.copy()
 
 
 def handle_data(data):
