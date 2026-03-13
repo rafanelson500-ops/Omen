@@ -14,7 +14,10 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
+minimum_update_interval = 0
+
 trigger_callback = lambda: ()
+update_callback = lambda: ()
 
 candles = deque()
 current_candle = {
@@ -25,6 +28,7 @@ current_candle = {
     "close": None,
     "price_levels": {}
 }
+last_tick_time = 0
 _lock = threading.Lock()
 
 
@@ -47,6 +51,7 @@ def reset_candle(tick_ts, new_open):
 
 
 def handle_data(data):
+    global last_tick_time
     # Use integer division to avoid float precision errors at candle boundaries.
     tick_ts = data.ts_event // 1_000_000_000
     p = data.price
@@ -75,9 +80,16 @@ def handle_data(data):
         current_candle["price_levels"][p] = [c_vol[0] + d_buy, c_vol[1] + d_sell]
 
 
-def start(cb):
-    global trigger_callback
+
+        if data.ts_event - last_tick_time > minimum_update_interval:
+            update_callback(current_candle)
+        last_tick_time = current_candle["timestamp"]
+
+
+def start(cb, update_cb):
+    global trigger_callback, update_callback
     trigger_callback = cb
+    update_callback = update_cb
     client = db.Live(DATABENTO_API_KEY)
     client.subscribe(
         dataset=dataset,

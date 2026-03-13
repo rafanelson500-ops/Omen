@@ -61,6 +61,10 @@ onMounted(() => {
     console.log(candle)
     candles.value?.update(formatCandle(candle))
   })
+  socket.value.on('update_candle', (candle: any) => {
+    console.log("update_candle", candle)
+    candles.value?.update(formatCandle(candle))
+  })
 })
 
 onUnmounted(() => {

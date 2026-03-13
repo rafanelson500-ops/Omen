@@ -46,13 +46,15 @@ states: States = {
 }
 
 # Fires everytime a 1s candle is completed.
-def handle_candle(candle):
+def handle_new_candle(candle):
     socketio.emit("candle", candle)
-    print(candle)
 
+def handle_update_candle(candle):
+    socketio.emit("update_candle", candle)
+    
 # Initialize the pipeline
 def main():
-    start_datafeed(handle_candle)
+    start_datafeed(handle_new_candle, handle_update_candle)
 
 if __name__ == "__main__":
     print("Starting pipeline")
