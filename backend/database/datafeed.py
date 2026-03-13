@@ -14,7 +14,7 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-minimum_update_interval = 0
+minimum_update_interval = 50_000_000  # 50 ms in nanoseconds (~20 updates/sec max)
 
 trigger_callback = lambda: ()
 update_callback = lambda: ()
@@ -59,6 +59,9 @@ def handle_data(data):
     side = -1 if data.side == "A" else 1
     qty = data.size
 
+    emit_update = False
+    snapshot = None
+
     with _lock:
         if current_candle["timestamp"] is None:
             # First tick ever: seed the candle fully before any max/min calls.
@@ -79,11 +82,14 @@ def handle_data(data):
         d_sell = qty if side == -1 else 0
         current_candle["price_levels"][p] = [c_vol[0] + d_buy, c_vol[1] + d_sell]
 
-
-
         if data.ts_event - last_tick_time > minimum_update_interval:
-            update_callback(current_candle)
-        last_tick_time = current_candle["timestamp"]
+            emit_update = True
+            snapshot = _snapshot_candle(current_candle)
+            last_tick_time = data.ts_event  # keep units in nanoseconds
+
+    # Emit outside the lock so socket I/O never blocks tick ingestion.
+    if emit_update:
+        update_callback(snapshot)
 
 
 def start(cb, update_cb):
