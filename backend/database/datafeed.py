@@ -42,13 +42,15 @@ timeframes: dict = {
         "callback":       None,
         "interval":       60 * 1_000_000_000,
     },
-    "15m": {
+    "5m": {
         "candles":        deque(),
         "current_candle": {**_default_candle, "price_levels": {}},
         "callback":       None,
-        "interval":       15 * 60 * 1_000_000_000,
+        "interval":       5 * 60 * 1_000_000_000,
     },
 }
+
+tick_callback = None
 
 _lock = threading.Lock()
 
@@ -131,6 +133,14 @@ def handle_data(data) -> None:
     side = 1 if data.side == "A" else -1
     qty  = data.size
 
+    if tick_callback is not None:
+        tick_callback({
+            "timestamp": tick_ts,
+            "price": p,
+            "side": side,
+            "size": qty,
+        })
+
     closed: list[tuple] = []   # (tf, candle) pairs to dispatch after lock release
 
     with _lock:
@@ -174,7 +184,7 @@ def handle_data(data) -> None:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def start(callbacks: "dict[str, callable] | callable") -> None:
+def start(callbacks: "dict[str, callable] | callable", tick_cb: callable) -> None:
     """
     Start the live datafeed.
 
@@ -195,6 +205,9 @@ def start(callbacks: "dict[str, callable] | callable") -> None:
     # Different handler per timeframe:
     start({"1s": on_1s_candle, "1m": on_1m_candle, "15m": on_15m_candle})
     """
+    global tick_callback
+    tick_callback = tick_cb
+
     if callable(callbacks):
         # Wrap the broadcast callable so the internal signature stays (tf, candle).
         for tf in timeframes:

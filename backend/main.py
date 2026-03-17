@@ -9,6 +9,8 @@ from database.datafeed import start as start_datafeed
 from flask import Flask, jsonify
 from flask_socketio import SocketIO
 
+from signal_engine import SignalEngine
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -19,11 +21,12 @@ def handle_new_1s_candle(candle: dict):
 def handle_new_1m_candle(candle: dict):
     print("1m", candle)
 
-def handle_new_15m_candle(candle: dict):
-    print("15m", candle)
+def handle_new_5m_candle(candle: dict):
+    print("5m", candle)
 
 def main():
-    start_datafeed({"1s": handle_new_1s_candle, "1m": handle_new_1m_candle, "15m": handle_new_15m_candle})
+    signal_engine = SignalEngine()
+    start_datafeed({"1s": signal_engine.on_1s, "1m": signal_engine.on_1m, "5m": signal_engine.on_5m}, signal_engine.on_tick)
 
 
 if __name__ == "__main__":
