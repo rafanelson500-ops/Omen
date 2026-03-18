@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import savgol_filter, argrelmin
+from scipy.signal import savgol_filter
 
 def calculate_volume_profile(candles: list[dict]) -> dict:
     price_bins = {}
@@ -9,8 +9,11 @@ def calculate_volume_profile(candles: list[dict]) -> dict:
     
     return price_bins
 
-def calculate_low_volume_nodes(volume_profile: dict) -> list[float]:
-
+def calculate_low_volume_nodes(
+    volume_profile: dict,
+    eps: float = 0.05,
+    curvature_threshold: float = 0.01,
+) -> list[float]:
 
     if len(volume_profile) < 3:
         return []
@@ -18,14 +21,30 @@ def calculate_low_volume_nodes(volume_profile: dict) -> list[float]:
     prices = np.array(sorted(volume_profile.keys()), dtype=np.float64)
     volumes = np.array([volume_profile[p] for p in prices], dtype=np.float64)
 
-    # Fit a smooth curve over the volume histogram
-    window = min(len(prices) | 1, 11)  # must be odd, cap at 11
+    # Normalize: z-score so LVNs are comparable across sessions
+    std = volumes.std()
+    if std == 0:
+        return []
+    volumes_norm = (volumes - volumes.mean()) / std
+
+    # Smooth the normalized curve
+    window = min(len(prices), 11)
     if window % 2 == 0:
-        window += 1
-    smoothed = savgol_filter(volumes, window_length=window, polyorder=3)
+        window -= 1
+    if window < 3:
+        window = 3
+    smoothed = savgol_filter(volumes_norm, window_length=window, polyorder=3)
 
-    # Find local minima, excluding the first and last points
-    (minima_indices,) = argrelmin(smoothed, order=1)
-    minima_indices = minima_indices[(minima_indices > 0) & (minima_indices < len(prices) - 1)]
+    # Curvature-based detection: flat first derivative + sharp second derivative
+    first_deriv = np.gradient(smoothed)
+    second_deriv = np.gradient(first_deriv)
 
-    return prices[minima_indices].tolist()
+    interior = np.arange(1, len(prices) - 1)
+    lvn_mask = (
+        (np.abs(first_deriv[interior]) < eps) &
+        (second_deriv[interior] > curvature_threshold)
+    )
+    lvn_indices = interior[lvn_mask]
+
+    # Only keep nodes where raw volume is <= 10
+    return prices[lvn_indices][volumes[lvn_indices] <= 10].tolist()

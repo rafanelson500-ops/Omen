@@ -130,7 +130,7 @@ def handle_data(data) -> None:
     p       = data.price
     # "A" = ask resting → buyer aggressor → buy side
     # "B" = bid resting → seller aggressor → sell side
-    side = 1 if data.side == "A" else -1
+    side = -1 if data.side == "A" else 1
     qty  = data.size
 
     if tick_callback is not None:
@@ -227,8 +227,8 @@ def start(callbacks: "dict[str, callable] | callable", tick_cb: callable) -> Non
     client.subscribe(
         dataset=dataset,
         schema="trades",
-        symbols="NQ.v.0",
-        stype_in="continuous",
+        symbols="NQM6",
+        stype_in="raw_symbol",
     )
     client.add_callback(handle_data)
     client.start()
