@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { createChart, CandlestickSeries, type ISeriesApi, type UTCTimestamp, type IPriceLine } from 'lightweight-charts'
+import { createChart, CandlestickSeries, LineSeries, type ISeriesApi, type UTCTimestamp, type IPriceLine } from 'lightweight-charts'
 import { chartOptions, candlestickSeriesOptions } from './chartOptions'
 import type { Socket } from 'socket.io-client'
 
@@ -10,6 +10,7 @@ const props = defineProps<{
 
 const chartContainer = ref<HTMLDivElement | null>(null)
 const priceSeries = ref<ISeriesApi<"Candlestick"> | null>(null)
+const extraSeries = ref<Record<string, ISeriesApi<"Line">>>({})
 const lvnLines = ref<IPriceLine[]>([])
 
 const formatCandle = (candle: any) => ({
@@ -20,12 +21,33 @@ const formatCandle = (candle: any) => ({
   close: candle.close / 1_000_000_000,
 })
 
+const formatExtra = (candle: any, key: string) => ({
+  time: Math.floor(candle.timestamp / 1_000_000_000) as UTCTimestamp,
+  value: candle[key],
+})
+
 onMounted(() => {
   const chart = createChart(chartContainer.value!, { ...chartOptions, autoSize: true })
   priceSeries.value = chart.addSeries(CandlestickSeries, candlestickSeriesOptions)
 
   props.socket.on('short_candle', (candle: any) => {
     priceSeries.value?.update(formatCandle(candle))
+    for (const key of Object.keys(candle)) {
+      if (key.startsWith('graph')) {
+        const split_key = key.split(':')
+        const pane = split_key[1]
+        const color = split_key[2]
+        if (extraSeries.value[key]) {
+          extraSeries.value[key].update(formatExtra(candle, key))
+        } else {
+          extraSeries.value[key] = chart.addSeries(LineSeries, {
+            color: color,
+            lineWidth: 1,
+          }, pane as unknown as number)
+          extraSeries.value[key].update(formatExtra(candle, key))
+        }
+      }
+    }
   })
 
   props.socket.on('lvn_update', (new_lvns: number[]) => {
