@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
-import ShortChart from './ShortChart.vue'
-import MedChart from './MedChart.vue'
-import LongChart from './LongChart.vue'
-import TickStream from './TickStream.vue'
+import Chart from './Chart.vue'
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
@@ -25,7 +22,7 @@ onUnmounted(() => {
 <template>
   <div class="app">
     <header class="header">
-      <span class="title">🧀 Cheese Trading Bot</span>
+      <span class="title">RLAD Trading Bot</span>
       <span class="live-badge">
         <span class="live-dot" />
         LIVE
@@ -33,23 +30,8 @@ onUnmounted(() => {
     </header>
     <main class="main">
       <div class="left-panel">
-        <div class="panel-label">1s · Short</div>
         <div class="chart-wrap">
-          <ShortChart v-if="socket" :socket="socket" />
-        </div>
-      </div>
-      <div class="right-panel">
-        <div class="panel-label">1m · Medium</div>
-        <div class="chart-wrap">
-          <MedChart v-if="socket" :socket="socket" />
-        </div>
-        <div class="panel-label">5m · Long</div>
-        <div class="chart-wrap">
-          <LongChart v-if="socket" :socket="socket" />
-        </div>
-        <div class="panel-label">Tick Stream</div>
-        <div class="tick-wrap">
-          <TickStream v-if="socket" :socket="socket" />
+          <Chart v-if="socket" :socket="socket" />
         </div>
       </div>
     </main>
