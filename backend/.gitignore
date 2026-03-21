@@ -4,3 +4,6 @@ _pycache_/
 **/__pycache__/
 gbt_model.pkl
 regieme_model.pkl
+
+book.csv
+trades.csv
