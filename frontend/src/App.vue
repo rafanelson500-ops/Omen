@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import Chart from './Chart.vue'
+import TradeLog from './TradeLog.vue'
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
@@ -30,9 +31,13 @@ onUnmounted(() => {
     </header>
     <main class="main">
       <div class="left-panel">
+        <div class="panel-label">Chart &amp; liquidity</div>
         <div class="chart-wrap">
           <Chart v-if="socket" :socket="socket" />
         </div>
+      </div>
+      <div class="right-panel">
+        <TradeLog v-if="socket" :socket="socket" />
       </div>
     </main>
   </div>
@@ -116,11 +121,11 @@ body {
 }
 
 .right-panel {
-  display: grid;
-  grid-template-rows: auto 1fr auto 1fr auto 1fr;
+  display: flex;
+  flex-direction: column;
   background: #2d3f55;
   min-height: 0;
-  gap: 2px;
+  min-width: 0;
 }
 
 .panel-label {
