@@ -35,7 +35,7 @@ class DatastreamEngine:
         self.client.add_callback(self._on_tick)
         self.client.start()
 
-    def start_simulated(self, start_time=datetime.fromisoformat("2022-03-02T14:30:00.914887539Z").timestamp()):
+    def start_simulated(self):
         def sim():
             ticks = pd.read_csv("trades.csv")
             ticks["ts_event"] = pd.to_datetime(ticks["ts_event"], utc=True)
@@ -50,8 +50,6 @@ class DatastreamEngine:
             for index in range(len(ticks) - 1):
                 row = ticks.iloc[index]
                 now = row["ts_event"]
-                if now.timestamp() < start_time:
-                    continue
                 next_ts = ticks.iloc[index + 1]["ts_event"]
 
                 self._on_tick(

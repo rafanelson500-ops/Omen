@@ -13,7 +13,7 @@ def on_tick(tick):
 
 def main():
     datastream = DatastreamEngine()
-    datastream.start_simulated(datetime.fromisoformat("2026-03-03T14:30:00.000000000Z").timestamp())
+    datastream.start_simulated()
     datastream.subscribe(on_tick)
 
 if __name__ == "__main__":
