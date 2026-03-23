@@ -21,6 +21,7 @@ type CandleMsg = {
   high: number
   low: number
   close: number
+  [key: string]: number
 }
 
 const lineHost = ref<HTMLDivElement | null>(null)
@@ -34,6 +35,7 @@ let chart100: IChartApi | null = null
 let seriesLine: ISeriesApi<'Line'> | null = null
 let series10: ISeriesApi<'Candlestick'> | null = null
 let series100: ISeriesApi<'Candlestick'> | null = null
+let savgolseries: ISeriesApi<'Line'> | null = null
 
 let lastTimeLine = -Infinity
 let lastTime10 = -Infinity
@@ -68,7 +70,7 @@ function on10Tick(c: CandleMsg) {
 }
 
 function on100Tick(c: CandleMsg) {
-  if (!series100 || !chart100) return
+  if (!series100 || !chart100 || !savgolseries) return
   const t = ensureMonotonic(c.time, lastTime100)
   lastTime100 = t
   series100.update({
@@ -78,6 +80,7 @@ function on100Tick(c: CandleMsg) {
     low: c.low,
     close: c.close,
   })
+  savgolseries.update({time: t as UTCTimestamp, value: c["savgol"]})
   chart100.timeScale().scrollToRealTime()
 }
 
@@ -99,6 +102,14 @@ onMounted(() => {
   chart100 = createChart(candle100Host.value!, { ...compactChartOptions, autoSize: true })
   series100 = chart100.addSeries(CandlestickSeries, {
     ...candlestickSeriesOptions,
+  })
+
+  savgolseries = chart100.addSeries(LineSeries, {
+    color: chartTheme.accent,
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+    priceLineVisible: true,
   })
 
   props.socket.on('1-tick', on1Tick)

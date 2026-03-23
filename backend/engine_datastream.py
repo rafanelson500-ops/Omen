@@ -12,7 +12,7 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "ESM6"
+symbol = "NQM6"
 
 class DatastreamEngine:
     def __init__(self) -> None:
@@ -24,7 +24,7 @@ class DatastreamEngine:
     def subscribe(self, n_ticks, cb_func) -> None:
         self.callbacks[n_ticks] = cb_func
 
-    def start(self, simulated = False) -> None:
+    def start(self, simulated = False, speed = 1) -> None:
         if simulated:
             def sim():
                 trades = pd.read_csv("trades.csv")
@@ -41,7 +41,7 @@ class DatastreamEngine:
                     self._on_tick(tick)
                     if i + 1 < len(trades):
                         delay_s = (trades.iloc[i + 1]["ts_event"] - trades.iloc[i]["ts_event"]).total_seconds()
-                        time.sleep(max(0.0, delay_s))
+                        time.sleep(max(0.0, delay_s) / speed)
             self.thread = threading.Thread(target=sim)
             self.thread.daemon = True
             self.thread.start()
