@@ -1,169 +1,227 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { createChart, LineSeries, LineStyle, type ISeriesApi, type UTCTimestamp, type IPriceLine } from 'lightweight-charts'
-import { chartOptions } from './chartOptions'
+import {
+  createChart,
+  LineSeries,
+  CandlestickSeries,
+  type IChartApi,
+  type ISeriesApi,
+  type UTCTimestamp,
+} from 'lightweight-charts'
+import { chartOptions, compactChartOptions, candlestickSeriesOptions, chartTheme } from './chartOptions'
 import type { Socket } from 'socket.io-client'
 
 const props = defineProps<{
   socket: Socket
 }>()
 
-const chartContainer = ref<HTMLDivElement | null>(null)
-const tickSeries = ref<ISeriesApi<'Line'> | null>(null)
-
-/** Map "bid|ask:price" -> PriceLine for idempotent updates */
-const wallLines = new Map<string, IPriceLine>()
-
-/** Active paper trade visualization */
-const tradeLines = ref<{
-  entry: IPriceLine
-  takeProfit: IPriceLine
-  stopLoss: IPriceLine
-} | null>(null)
-
-function wallKey(side: string, price: number): string {
-  return `${side}:${price}`
+type CandleMsg = {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
 }
 
-const formatTick = (tick: { ts: number; price: number }) => ({
-  time: tick.ts as UTCTimestamp,
-  value: tick.price,
-})
+const lineHost = ref<HTMLDivElement | null>(null)
+const candle10Host = ref<HTMLDivElement | null>(null)
+const candle100Host = ref<HTMLDivElement | null>(null)
 
-function onTick(tick: { ts: number; price: number; side?: number; size?: number }) {
-  tickSeries.value?.update(formatTick(tick))
+let chartLine: IChartApi | null = null
+let chart10: IChartApi | null = null
+let chart100: IChartApi | null = null
+
+let seriesLine: ISeriesApi<'Line'> | null = null
+let series10: ISeriesApi<'Candlestick'> | null = null
+let series100: ISeriesApi<'Candlestick'> | null = null
+
+let lastTimeLine = -Infinity
+let lastTime10 = -Infinity
+let lastTime100 = -Infinity
+
+const TIME_EPS = 1e-6
+
+function ensureMonotonic(t: number, last: number): number {
+  return t > last ? t : last + TIME_EPS
 }
 
-function onWallDelta(payload: {
-  added?: Array<{ side: string; price: number; size: number }>
-  removed?: Array<{ side: string; price: number }>
-}) {
-  const series = tickSeries.value
-  if (!series) return
-
-  for (const r of payload.removed ?? []) {
-    const k = wallKey(r.side, r.price)
-    const line = wallLines.get(k)
-    if (line) {
-      series.removePriceLine(line)
-      wallLines.delete(k)
-    }
-  }
-
-  for (const a of payload.added ?? []) {
-    const k = wallKey(a.side, a.price)
-    const existing = wallLines.get(k)
-    if (existing) {
-      series.removePriceLine(existing)
-      wallLines.delete(k)
-    }
-    const color = a.side === 'bid' ? '#22c55e' : '#ef4444'
-    const line = series.createPriceLine({
-      price: a.price,
-      color,
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: `${a.side} ${a.size}`,
-    })
-    wallLines.set(k, line)
-  }
+function on1Tick(c: CandleMsg) {
+  if (!seriesLine || !chartLine) return
+  const t = ensureMonotonic(c.time, lastTimeLine)
+  lastTimeLine = t
+  seriesLine.update({ time: t as UTCTimestamp, value: c.close })
+  chartLine.timeScale().scrollToRealTime()
 }
 
-function clearTradeLines() {
-  const series = tickSeries.value
-  const t = tradeLines.value
-  if (!series || !t) {
-    tradeLines.value = null
-    return
-  }
-  series.removePriceLine(t.entry)
-  series.removePriceLine(t.takeProfit)
-  series.removePriceLine(t.stopLoss)
-  tradeLines.value = null
-}
-
-function onTradeOpened(p: {
-  id: string
-  side: string
-  entry: number
-  take_profit: number
-  stop_loss: number
-}) {
-  const series = tickSeries.value
-  if (!series) return
-  clearTradeLines()
-  const entryLine = series.createPriceLine({
-    price: p.entry,
-    color: '#60a5fa',
-    lineWidth: 2,
-    lineStyle: LineStyle.Solid,
-    axisLabelVisible: true,
-    title: `${p.side.toUpperCase()} #${p.id} entry`,
+function on10Tick(c: CandleMsg) {
+  if (!series10 || !chart10) return
+  const t = ensureMonotonic(c.time, lastTime10)
+  lastTime10 = t
+  series10.update({
+    time: t as UTCTimestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
   })
-  const tpLine = series.createPriceLine({
-    price: p.take_profit,
-    color: '#22c55e',
-    lineWidth: 2,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: 'TP +4',
-  })
-  const slLine = series.createPriceLine({
-    price: p.stop_loss,
-    color: '#f97316',
-    lineWidth: 2,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: 'SL -8',
-  })
-  tradeLines.value = {
-    entry: entryLine,
-    takeProfit: tpLine,
-    stopLoss: slLine,
-  }
+  chart10.timeScale().scrollToRealTime()
 }
 
-function onTradeClosed() {
-  clearTradeLines()
+function on100Tick(c: CandleMsg) {
+  if (!series100 || !chart100) return
+  const t = ensureMonotonic(c.time, lastTime100)
+  lastTime100 = t
+  series100.update({
+    time: t as UTCTimestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+  })
+  chart100.timeScale().scrollToRealTime()
 }
 
 onMounted(() => {
-  const chart = createChart(chartContainer.value!, { ...chartOptions, autoSize: true })
-  tickSeries.value = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 1 })
+  chartLine = createChart(lineHost.value!, { ...chartOptions, autoSize: true })
+  seriesLine = chartLine.addSeries(LineSeries, {
+    color: chartTheme.accent,
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+    priceLineVisible: true,
+  })
 
-  props.socket.on('tick', onTick)
-  props.socket.on('wall_delta', onWallDelta)
-  props.socket.on('trade_opened', onTradeOpened)
-  props.socket.on('trade_closed', onTradeClosed)
+  chart10 = createChart(candle10Host.value!, { ...compactChartOptions, autoSize: true })
+  series10 = chart10.addSeries(CandlestickSeries, {
+    ...candlestickSeriesOptions,
+  })
+
+  chart100 = createChart(candle100Host.value!, { ...compactChartOptions, autoSize: true })
+  series100 = chart100.addSeries(CandlestickSeries, {
+    ...candlestickSeriesOptions,
+  })
+
+  props.socket.on('1-tick', on1Tick)
+  props.socket.on('10-tick', on10Tick)
+  props.socket.on('100-tick', on100Tick)
 })
 
 onUnmounted(() => {
-  props.socket.off('tick', onTick)
-  props.socket.off('wall_delta', onWallDelta)
-  props.socket.off('trade_opened', onTradeOpened)
-  props.socket.off('trade_closed', onTradeClosed)
-  wallLines.clear()
-  clearTradeLines()
+  props.socket.off('1-tick', on1Tick)
+  props.socket.off('10-tick', on10Tick)
+  props.socket.off('100-tick', on100Tick)
+  chartLine?.remove()
+  chart10?.remove()
+  chart100?.remove()
+  chartLine = null
+  chart10 = null
+  chart100 = null
+  seriesLine = null
+  series10 = null
+  series100 = null
 })
 </script>
 
 <template>
-  <div class="chart-wrap-inner">
-    <div class="chart" ref="chartContainer" />
+  <div class="charts-dashboard">
+    <section class="panel panel--primary">
+      <header class="panel-head">
+        <span class="panel-title">Tick close</span>
+        <span class="panel-hint">1-tick → line</span>
+      </header>
+      <div class="panel-chart" ref="lineHost" />
+    </section>
+
+    <div class="panel-row">
+      <section class="panel panel--secondary">
+        <header class="panel-head">
+          <span class="panel-title">10-tick</span>
+          <span class="panel-hint">OHLC</span>
+        </header>
+        <div class="panel-chart" ref="candle10Host" />
+      </section>
+      <section class="panel panel--secondary">
+        <header class="panel-head">
+          <span class="panel-title">100-tick</span>
+          <span class="panel-hint">OHLC</span>
+        </header>
+        <div class="panel-chart" ref="candle100Host" />
+      </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.chart-wrap-inner {
-  position: relative;
-  width: 100%;
+.charts-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   height: 100%;
+  min-height: 0;
+  padding: 10px;
+  background: linear-gradient(165deg, #141c2a 0%, #1a2332 45%, #151d2c 100%);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(17, 29, 44, 0.65);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 32px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.panel--primary {
+  flex: 1.35;
+  min-height: 200px;
+}
+
+.panel-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 0.85;
+  min-height: 160px;
+}
+
+.panel--secondary {
   min-height: 0;
 }
 
-.chart {
+.panel-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #f1f5f9;
+}
+
+.panel-hint {
+  font-size: 10px;
+  font-weight: 500;
+  color: #64748b;
+  letter-spacing: 0.04em;
+}
+
+.panel-chart {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
+  position: relative;
 }
 </style>

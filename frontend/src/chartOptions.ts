@@ -20,28 +20,41 @@ export const candlestickSeriesOptions = {
 }
 
 export const chartOptions = {
-    layout: {
-      textColor: chartTheme.text,
-      background: { type: ColorType.Solid, color: chartTheme.bg },
-      fontFamily: '"Outfit", system-ui, sans-serif',
-      fontSize: 11,
-    },
-    grid: {
-      vertLines: { color: chartTheme.border },
-      horzLines: { color: chartTheme.border },
-    },
-    crosshair: {
-      vertLine: { color: "#ffffff", labelBackgroundColor: "#000000" },
-      horzLine: { color: "#ffffff", labelBackgroundColor: "#000000" },
-      mode: CrosshairMode.Magnet,
-    },
-    rightPriceScale: {
-      borderColor: chartTheme.border,
-      scaleMargins: { top: 0.08, bottom: 0.08 },
-    },
-    timeScale: {
-      timeVisible: true,
-      secondsVisible: true,
-      borderColor: chartTheme.border,
-    },
-  }
+  layout: {
+    textColor: chartTheme.text,
+    background: { type: ColorType.Solid, color: chartTheme.bg },
+    fontFamily: '"Outfit", system-ui, sans-serif',
+    fontSize: 11,
+  },
+  grid: {
+    vertLines: { color: chartTheme.border },
+    horzLines: { color: chartTheme.border },
+  },
+  crosshair: {
+    vertLine: { color: 'rgba(241, 245, 249, 0.35)', labelBackgroundColor: '#0f172a' },
+    horzLine: { color: 'rgba(241, 245, 249, 0.35)', labelBackgroundColor: '#0f172a' },
+    mode: CrosshairMode.Magnet,
+  },
+  rightPriceScale: {
+    borderColor: chartTheme.border,
+    scaleMargins: { top: 0.08, bottom: 0.08 },
+  },
+  timeScale: {
+    timeVisible: true,
+    secondsVisible: true,
+    borderColor: chartTheme.border,
+  },
+}
+
+/** Slightly tighter for the secondary candle row */
+export const compactChartOptions = {
+  ...chartOptions,
+  layout: {
+    ...chartOptions.layout,
+    fontSize: 10,
+  },
+  rightPriceScale: {
+    ...chartOptions.rightPriceScale,
+    scaleMargins: { top: 0.1, bottom: 0.1 },
+  },
+}

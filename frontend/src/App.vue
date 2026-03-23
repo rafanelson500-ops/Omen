@@ -31,7 +31,7 @@ onUnmounted(() => {
     </header>
     <main class="main">
       <div class="left-panel">
-        <div class="panel-label">Chart &amp; liquidity</div>
+        <div class="panel-label">Market charts</div>
         <div class="chart-wrap">
           <Chart v-if="socket" :socket="socket" />
         </div>

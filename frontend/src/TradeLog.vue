@@ -13,6 +13,13 @@ type LogRow =
       side: string
       signalPrice: number
       wallPrice: number
+      needsAbsorption?: boolean
+      maxTradeTicks?: number
+    }
+  | {
+      kind: 'cancelled'
+      ts: number
+      reason: string
     }
   | {
       kind: 'open'
@@ -53,6 +60,8 @@ function onPending(p: {
   signal_price: number
   wall_price: number
   ts: number
+  needs_absorption?: boolean
+  max_trade_ticks?: number
 }) {
   rows.value.push({
     kind: 'pending',
@@ -60,6 +69,17 @@ function onPending(p: {
     side: p.side,
     signalPrice: p.signal_price,
     wallPrice: p.wall_price,
+    needsAbsorption: p.needs_absorption,
+    maxTradeTicks: p.max_trade_ticks,
+  })
+  queueScroll()
+}
+
+function onArmCancelled(p: { reason: string; ts: number }) {
+  rows.value.push({
+    kind: 'cancelled',
+    ts: p.ts,
+    reason: p.reason,
   })
   queueScroll()
 }
@@ -130,12 +150,14 @@ onMounted(() => {
   props.socket.on('trade_pending', onPending)
   props.socket.on('trade_opened', onOpened)
   props.socket.on('trade_closed', onClosed)
+  props.socket.on('trade_arm_cancelled', onArmCancelled)
 })
 
 onUnmounted(() => {
   props.socket.off('trade_pending', onPending)
   props.socket.off('trade_opened', onOpened)
   props.socket.off('trade_closed', onClosed)
+  props.socket.off('trade_arm_cancelled', onArmCancelled)
 })
 </script>
 
@@ -161,15 +183,28 @@ onUnmounted(() => {
         v-for="(r, i) in rows"
         :key="i"
         class="row"
-        :class="['row--' + r.kind, r.kind === 'closed' && (r.pnlTicks >= 0 ? 'row--win' : 'row--loss')]"
+        :class="[
+          'row--' + r.kind,
+          r.kind === 'closed' && (r.pnlTicks >= 0 ? 'row--win' : 'row--loss'),
+        ]"
       >
         <template v-if="r.kind === 'pending'">
           <span class="badge badge--armed">ARMED</span>
           <span class="meta">{{ fmtTs(r.ts) }}</span>
           <span class="side" :class="r.side">{{ r.side.toUpperCase() }}</span>
-          <span class="detail"
-            >signal {{ fmtPx(r.signalPrice) }} · wall {{ fmtPx(r.wallPrice) }} (1 tick)</span
-          >
+          <span class="detail">
+            signal {{ fmtPx(r.signalPrice) }} · wall {{ fmtPx(r.wallPrice) }} (1 tick)
+            <template v-if="r.needsAbsorption && r.maxTradeTicks != null">
+              · absorption · max {{ r.maxTradeTicks }} trade ticks</template
+            >
+          </span>
+        </template>
+        <template v-else-if="r.kind === 'cancelled'">
+          <span class="badge badge--abort">ABORT</span>
+          <span class="meta">{{ fmtTs(r.ts) }}</span>
+          <span class="detail">{{
+            r.reason === 'no_absorption' ? 'No absorption within window' : r.reason
+          }}</span>
         </template>
         <template v-else-if="r.kind === 'open'">
           <span class="badge badge--open">OPEN</span>
@@ -306,6 +341,11 @@ onUnmounted(() => {
   border-left: 3px solid #3b82f6;
 }
 
+.row--cancelled {
+  border-left: 3px solid #a78bfa;
+  opacity: 0.95;
+}
+
 .row--closed.row--win {
   border-left: 3px solid #22c55e;
 }
@@ -332,6 +372,11 @@ onUnmounted(() => {
 .badge--open {
   background: #1e3a5f;
   color: #93c5fd;
+}
+
+.badge--abort {
+  background: #4c1d95;
+  color: #e9d5ff;
 }
 
 .badge--tp {
