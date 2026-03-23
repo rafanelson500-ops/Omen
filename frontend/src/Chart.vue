@@ -8,6 +8,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts'
+import * as LightweightCharts from 'lightweight-charts'
 import { chartOptions, compactChartOptions, candlestickSeriesOptions, chartTheme } from './chartOptions'
 import type { Socket } from 'socket.io-client'
 
@@ -24,6 +25,14 @@ type CandleMsg = {
   [key: string]: number
 }
 
+type SignalMarker = {
+  time: UTCTimestamp
+  position: 'aboveBar' | 'belowBar'
+  color: string
+  shape: 'arrowUp' | 'arrowDown'
+  text: string
+}
+
 const lineHost = ref<HTMLDivElement | null>(null)
 const candle10Host = ref<HTMLDivElement | null>(null)
 const candle100Host = ref<HTMLDivElement | null>(null)
@@ -35,16 +44,29 @@ let chart100: IChartApi | null = null
 let seriesLine: ISeriesApi<'Line'> | null = null
 let series10: ISeriesApi<'Candlestick'> | null = null
 let series100: ISeriesApi<'Candlestick'> | null = null
-let savgolseries: ISeriesApi<'Line'> | null = null
 
 let lastTimeLine = -Infinity
 let lastTime10 = -Infinity
 let lastTime100 = -Infinity
+const signalMarkers: SignalMarker[] = []
+let markerApi: { setMarkers?: (markers: SignalMarker[]) => void } | null = null
 
 const TIME_EPS = 1e-6
 
 function ensureMonotonic(t: number, last: number): number {
   return t > last ? t : last + TIME_EPS
+}
+
+function applySignalMarkers() {
+  if (!series100) return
+
+  const legacyApi = series100 as unknown as { setMarkers?: (markers: SignalMarker[]) => void }
+  if (legacyApi.setMarkers) {
+    legacyApi.setMarkers(signalMarkers)
+    return
+  }
+
+  markerApi?.setMarkers?.(signalMarkers)
 }
 
 function on1Tick(c: CandleMsg) {
@@ -70,7 +92,7 @@ function on10Tick(c: CandleMsg) {
 }
 
 function on100Tick(c: CandleMsg) {
-  if (!series100 || !chart100 || !savgolseries) return
+  if (!series100 || !chart100) return
   const t = ensureMonotonic(c.time, lastTime100)
   lastTime100 = t
   series100.update({
@@ -80,7 +102,6 @@ function on100Tick(c: CandleMsg) {
     low: c.low,
     close: c.close,
   })
-  savgolseries.update({time: t as UTCTimestamp, value: c["savgol"]})
   chart100.timeScale().scrollToRealTime()
 }
 
@@ -103,14 +124,13 @@ onMounted(() => {
   series100 = chart100.addSeries(CandlestickSeries, {
     ...candlestickSeriesOptions,
   })
-
-  savgolseries = chart100.addSeries(LineSeries, {
-    color: chartTheme.accent,
-    lineWidth: 2,
-    crosshairMarkerVisible: true,
-    lastValueVisible: true,
-    priceLineVisible: true,
-  })
+  const markerFactory = LightweightCharts as unknown as {
+    createSeriesMarkers?: (
+      series: ISeriesApi<'Candlestick'>,
+      markers: SignalMarker[],
+    ) => { setMarkers?: (markers: SignalMarker[]) => void }
+  }
+  markerApi = markerFactory.createSeriesMarkers?.(series100, signalMarkers) ?? null
 
   props.socket.on('1-tick', on1Tick)
   props.socket.on('10-tick', on10Tick)
@@ -130,6 +150,8 @@ onUnmounted(() => {
   seriesLine = null
   series10 = null
   series100 = null
+  markerApi = null
+  signalMarkers.length = 0
 })
 </script>
 
