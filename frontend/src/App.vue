@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import Chart from './Chart.vue'
 import TradeLog from './TradeLog.vue'
+import StrategyPanel from './StrategyPanel.vue'
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
@@ -37,7 +38,12 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="right-panel">
-        <TradeLog v-if="socket" :socket="socket" />
+        <div class="strategy-wrap">
+          <StrategyPanel v-if="socket" :socket="socket" />
+        </div>
+        <div class="log-wrap">
+          <TradeLog v-if="socket" :socket="socket" />
+        </div>
       </div>
     </main>
   </div>
@@ -109,8 +115,9 @@ body {
   grid-template-columns: 65fr 35fr;
   flex: 1;
   min-height: 0;
-  gap: 2px;
-  background: #2d3f55;
+  gap: 8px;
+  padding: 8px;
+  background: #0d1520;
 }
 
 .left-panel {
@@ -118,14 +125,18 @@ body {
   flex-direction: column;
   background: #1a2332;
   min-height: 0;
+  border: 1px solid #2d3f55;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .right-panel {
   display: flex;
   flex-direction: column;
-  background: #2d3f55;
+  background: transparent;
   min-height: 0;
   min-width: 0;
+  gap: 8px;
 }
 
 .panel-label {
@@ -152,5 +163,61 @@ body {
 .tick-wrap {
   min-height: 0;
   overflow: hidden;
+}
+
+.strategy-wrap {
+  flex: 0.62;
+  min-height: 0;
+  border: 1px solid #2d3f55;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #101928;
+}
+
+.log-wrap {
+  flex: 0.38;
+  min-height: 0;
+  border: 1px solid #2d3f55;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #111d2c;
+}
+
+@media (max-width: 1200px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+
+  .right-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .strategy-wrap,
+  .log-wrap {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 860px) {
+  .header {
+    padding: 0 12px;
+    height: 40px;
+  }
+
+  .title {
+    font-size: 13px;
+  }
+
+  .main {
+    padding: 6px;
+    gap: 6px;
+  }
+
+  .right-panel {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

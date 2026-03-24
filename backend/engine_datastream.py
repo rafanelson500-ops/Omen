@@ -60,6 +60,8 @@ class DatastreamEngine:
         try:
             price = float(tick.pretty_price)
             ts = float(tick.ts_event / 1_000_000_000)
+            size = float(getattr(tick, "size", 0.0))
+            side = str(getattr(tick, "side", "")).upper()
 
             self.candle_counter += 1
             for n in self.callbacks.keys():
@@ -70,11 +72,26 @@ class DatastreamEngine:
                         "high": price,
                         "low": price,
                         "close": price,
+                        "volume": 0.0,
+                        "buy_volume": 0.0,
+                        "sell_volume": 0.0,
+                        "ticks": 0,
+                        "size": size,
+                        "side": side,
                     }
                 else:
                     self.candle_states[n]["high"] = max(self.candle_states[n]["high"], price)
                     self.candle_states[n]["low"] = min(self.candle_states[n]["low"], price)
                     self.candle_states[n]["close"] = price
+                    self.candle_states[n]["size"] = size
+                    self.candle_states[n]["side"] = side
+
+                self.candle_states[n]["volume"] += size
+                self.candle_states[n]["ticks"] += 1
+                if side in {"B", "BUY"}:
+                    self.candle_states[n]["buy_volume"] += size
+                elif side in {"A", "S", "SELL"}:
+                    self.candle_states[n]["sell_volume"] += size
 
                 if self.candle_counter % n == 0:
                     self._emit_candle(n)

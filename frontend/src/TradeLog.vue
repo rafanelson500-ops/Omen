@@ -236,7 +236,6 @@ onUnmounted(() => {
   min-height: 0;
   height: 100%;
   background: #111d2c;
-  border-left: 2px solid #2d3f55;
 }
 
 .trade-log-header {
@@ -246,7 +245,8 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px 6px 12px;
-  border-bottom: 2px solid #2d3f55;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.32);
 }
 
 .trade-log-title {
