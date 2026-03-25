@@ -10,30 +10,42 @@ Strategy Handler:
         * Trade Cooldown Ticks
 
     States -
-        * Status            IDLE, SETUP_FOUND, IN_TRADE, COOLDOWN
+        * Status            IDLE, IN_TRADE, COOLDOWN
         * Side              LONG, SHORT, NONE
         * Entry Price       Number
         * Daily PnL         Number
         * Trade Count       Number
 
+    Flow -
+        IDLE -> IN_TRADE -> COOLDOWN -> IDLE
+
+    Methods -
+        submit_trade(): checks if trade doesnt violate any risk params/cooldowns
+
 Regime Handler:
     Variables -
         * Thresholds for regime labels
-        * Time windows for session labels
+        * Definitions for session labels
 
     States -
         * Regime Labels       WARMING_UP, WEAK_TREND, STRONG_TREND, CHOPPY
         * Session             Overnight, Pre-Market, NYSE Open, Lunch, Power Hour
         * Volatility Value    Number
 
+    Methods -
+        update_regime(): callback for 100th tick, updates regime labels, session, and volatility
+
 Setup Handler:
     Variables -
         * Thresholds for setup labels
 
     States -
-        * Setup Labels       WARMING_UP, SETUP_FOUND, IN_TRADE, EXIT
-        * Absorption Value    Number
+        * Setup Labels        WARMING_UP, NO_SETUP, LONG_SETUP, SHORT_SETUP
         * Pressure Value      Number
+        * Delta               Number
+
+    Methods -
+        update_setup(): callback for 10th tick, updates setup labels, pressure, and delta
 
 Microstate Handler:
     Variables -
@@ -41,10 +53,25 @@ Microstate Handler:
         * Time windows for microstate labels
 
     States -
-        * Microstate Labels       WARMING_UP, SETUP_FOUND, IN_TRADE, EXIT
-        * Pressure Value    Number
         * Absorption Value    Number
-        * Volatility Value    Number
+        * Ticks per second    Number
+
+    Methods -
+        update_microstate(): callback for every tick, updates absorption, and tps
+        handle_signal(): checks for alignment on every layer, then submits the trade
+
+Pipeline:
+    Every 100 ticks       Update regime states
+    Every 10 ticks        Update setups
+    Every 1 tick          Check for trigger
+
+    If trigger:
+        check if regime is tradeable else 'Blocked by regime'
+        check if trigger aligns with setup else pass
+        check if setup is quality enough else 'Blocked by quality filter
+        check if not in trade else 'Blocked by ongoing trade'
+        place trade with quality based risk settings (5% on medium conviction, 10% on high conviction)
+
 """
 from classes.datastream import Datastream
 from flask import Flask
