@@ -12,9 +12,9 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "NQM6"
+symbol = "ESM6"
 
-class DatastreamEngine:
+class Datastream:
     def __init__(self) -> None:
         print("Initializing Datastream Engine")
         self.callbacks = {}
@@ -88,9 +88,9 @@ class DatastreamEngine:
 
                 self.candle_states[n]["volume"] += size
                 self.candle_states[n]["ticks"] += 1
-                if side in {"B", "BUY"}:
+                if side == "B":
                     self.candle_states[n]["buy_volume"] += size
-                elif side in {"A", "S", "SELL"}:
+                elif side == "A":
                     self.candle_states[n]["sell_volume"] += size
 
                 if self.candle_counter % n == 0:
