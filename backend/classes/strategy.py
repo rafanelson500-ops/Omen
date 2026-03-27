@@ -25,6 +25,8 @@ class Strategy:
 
     def handle_signal(self, tick, side):
         if self.status == "IDLE" and self.side == 0:
+            self.side = side
+            self.position_size = 1
             self.status = "ORDER_SUBMITTED"
         else:
             print("Error: In trade or on cooldown")
