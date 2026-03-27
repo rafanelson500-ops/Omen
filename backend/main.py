@@ -74,6 +74,7 @@ Pipeline:
 
 """
 from classes.datastream import Datastream
+from classes.microstate import Microstate
 from flask import Flask
 from flask_socketio import SocketIO
 
@@ -82,20 +83,22 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 def main():
     datastream = Datastream()
+    microstate = Microstate()
 
     def on_tick(candle):
-        print(1)
-        socketio.emit("1-tick", candle)
-        # Update strategy state
+        microstate.update(candle)
+        # socketio.emit("1-tick", candle)
 
     def on_10th_tick(candle):
-        print(10)
-        socketio.emit("10-tick", candle)
+        pass
+        # print(10)
+        # socketio.emit("10-tick", candle)
         # Update setup state
 
     def on_100th_tick(candle):
-        print(100)
-        socketio.emit("100-tick", candle)
+        pass
+        # print(100)
+        # socketio.emit("100-tick", candle)
         # Update regime state
 
     datastream.subscribe(1, on_tick)
