@@ -94,6 +94,13 @@ type StrategyStatusPayload = {
   side: number
 }
 
+type InstantBacktestPayload = {
+  ticks: TickPayload[]
+  ten_ticks: CandleMsg[]
+  hundred_ticks: HundredTickPayload[]
+  strategy_statuses: StrategyStatusPayload[]
+}
+
 function onStrategyStatus(payload: StrategyStatusPayload) {
   if (!seriesLine) return
   const { time, status, side } = payload
@@ -174,6 +181,118 @@ function on100Tick(payload: HundredTickPayload) {
   }
 }
 
+function onInstantBacktest(batch: InstantBacktestPayload) {
+  if (!seriesLine || !chartLine) return
+
+  let lastT = -Infinity
+  const linePts: { time: UTCTimestamp; value: number }[] = []
+  for (const p of batch.ticks ?? []) {
+    const c = p.tick
+    const t = ensureMonotonic(c.time, lastT)
+    lastT = t
+    linePts.push({ time: t as UTCTimestamp, value: c.value })
+  }
+  if (linePts.length) {
+    seriesLine.setData(linePts)
+    lastTimeLine = linePts[linePts.length - 1]!.time as number
+  }
+
+  if (series10 && chart10) {
+    let last10 = -Infinity
+    const c10: {
+      time: UTCTimestamp
+      open: number
+      high: number
+      low: number
+      close: number
+    }[] = []
+    for (const c of batch.ten_ticks ?? []) {
+      const t = ensureMonotonic(c.time, last10)
+      last10 = t
+      c10.push({
+        time: t as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })
+    }
+    if (c10.length) {
+      series10.setData(c10)
+      lastTime10 = c10[c10.length - 1]!.time as number
+    }
+  }
+
+  if (
+    series100 &&
+    chart100 &&
+    seriesVWAP &&
+    seriesVWAPsigplus1 &&
+    seriesVWAPsigminus1 &&
+    seriesVWAPsigplus2 &&
+    seriesVWAPsigminus2
+  ) {
+    let last100 = -Infinity
+    const hCandles: {
+      time: UTCTimestamp
+      open: number
+      high: number
+      low: number
+      close: number
+    }[] = []
+    const vwapPts: { time: UTCTimestamp; value: number }[] = []
+    const vp1: { time: UTCTimestamp; value: number }[] = []
+    const vm1: { time: UTCTimestamp; value: number }[] = []
+    const vp2: { time: UTCTimestamp; value: number }[] = []
+    const vm2: { time: UTCTimestamp; value: number }[] = []
+    for (const payload of batch.hundred_ticks ?? []) {
+      const { c, vwap, vwap_sigma } = payload
+      const t = ensureMonotonic(c.time, last100)
+      last100 = t
+      hCandles.push({
+        time: t as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })
+      if (Number.isFinite(vwap)) {
+        const tt = t as UTCTimestamp
+        vwapPts.push({ time: tt, value: vwap })
+        vp1.push({ time: tt, value: vwap + vwap_sigma })
+        vm1.push({ time: tt, value: vwap - vwap_sigma })
+        vp2.push({ time: tt, value: vwap + 2 * vwap_sigma })
+        vm2.push({ time: tt, value: vwap - 2 * vwap_sigma })
+      }
+    }
+    if (hCandles.length) {
+      series100.setData(hCandles)
+      lastTime100 = hCandles[hCandles.length - 1]!.time as number
+    }
+    if (vwapPts.length) {
+      seriesVWAP.setData(vwapPts)
+      seriesVWAPsigplus1.setData(vp1)
+      seriesVWAPsigminus1.setData(vm1)
+      seriesVWAPsigplus2.setData(vp2)
+      seriesVWAPsigminus2.setData(vm2)
+      vwapLineSeeded = true
+    } else {
+      vwapLineSeeded = false
+    }
+  }
+
+  seriesMarkers.length = 0
+  lastMarkerTime = -Infinity
+  lastTradeSideForMarkers = 0
+  for (const s of batch.strategy_statuses ?? []) {
+    onStrategyStatus(s)
+  }
+  applySeriesMarkers()
+
+  chart10?.timeScale().scrollToRealTime()
+  chart100?.timeScale().scrollToRealTime()
+}
+
 onMounted(() => {
   chartLine = createChart(lineHost.value!, { ...chartOptions, autoSize: true })
   seriesLine = chartLine.addSeries(LineSeries, {
@@ -232,6 +351,7 @@ onMounted(() => {
   props.socket.on('10-tick', on10Tick)
   props.socket.on('100-tick', on100Tick)
   props.socket.on('strategy_status', onStrategyStatus)
+  props.socket.on('instant_backtest', onInstantBacktest)
 })
 
 onUnmounted(() => {
@@ -239,6 +359,7 @@ onUnmounted(() => {
   props.socket.off('10-tick', on10Tick)
   props.socket.off('100-tick', on100Tick)
   props.socket.off('strategy_status', onStrategyStatus)
+  props.socket.off('instant_backtest', onInstantBacktest)
   chartLine?.remove()
   chart10?.remove()
   chart100?.remove()

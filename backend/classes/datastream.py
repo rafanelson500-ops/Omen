@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 import databento as db
 import pandas as pd
@@ -24,25 +25,34 @@ class Datastream:
     def subscribe(self, n_ticks, cb_func) -> None:
         self.callbacks[n_ticks] = cb_func
 
-    def start(self, simulated = False, instant = False) -> None:
+    def start(
+        self,
+        simulated: bool = False,
+        instant: bool = False,
+        on_complete: Callable[[], None] | None = None,
+    ) -> None:
         if simulated:
             def sim():
-                trades = pd.read_csv("trades.csv")
-                trades["ts_event"] = pd.to_datetime(trades["ts_event"], utc=True)
-                class Tick:
-                    def __init__(self, price: Any, side: str, size: Any, ts_event: int) -> None:
-                        self.pretty_price = price
-                        self.side = side
-                        self.size = size
-                        self.ts_event = ts_event
-                for i in range(len(trades)):
-                    ts_ns = int(trades.iloc[i]["ts_event"].value)
-                    tick = Tick(trades.iloc[i]["price"], trades.iloc[i]["side"], trades.iloc[i]["size"], ts_ns)
-                    self._on_tick(tick)
-                    if i + 1 < len(trades):
-                        delay_s = (trades.iloc[i + 1]["ts_event"] - trades.iloc[i]["ts_event"]).total_seconds()
-                        if not instant:
-                            time.sleep(max(0.0, delay_s)/5)
+                try:
+                    trades = pd.read_csv("trades.csv")
+                    trades["ts_event"] = pd.to_datetime(trades["ts_event"], utc=True)
+                    class Tick:
+                        def __init__(self, price: Any, side: str, size: Any, ts_event: int) -> None:
+                            self.pretty_price = price
+                            self.side = side
+                            self.size = size
+                            self.ts_event = ts_event
+                    for i in range(len(trades)):
+                        ts_ns = int(trades.iloc[i]["ts_event"].value)
+                        tick = Tick(trades.iloc[i]["price"], trades.iloc[i]["side"], trades.iloc[i]["size"], ts_ns)
+                        self._on_tick(tick)
+                        if i + 1 < len(trades):
+                            delay_s = (trades.iloc[i + 1]["ts_event"] - trades.iloc[i]["ts_event"]).total_seconds()
+                            if not instant:
+                                time.sleep(max(0.0, delay_s))
+                finally:
+                    if on_complete is not None:
+                        on_complete()
             self.thread = threading.Thread(target=sim)
             self.thread.daemon = True
             self.thread.start()

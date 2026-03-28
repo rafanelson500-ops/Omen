@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, shallowRef } from 'vue'
+import { nextTick, onMounted, onUnmounted, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import Chart from './Chart.vue'
 import ConfluenceLog from './ConfluenceLog.vue'
@@ -13,7 +13,13 @@ if (window.location.hostname === 'play.nukesmp.com') {
 const socket = shallowRef<Socket | null>(null)
 
 onMounted(() => {
-  socket.value = io(url)
+  const s = io(url)
+  socket.value = s
+  s.on('connect', () => {
+    void nextTick(() => {
+      s.emit('request_instant_snapshot')
+    })
+  })
 })
 
 onUnmounted(() => {

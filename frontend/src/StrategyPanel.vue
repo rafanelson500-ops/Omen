@@ -133,16 +133,40 @@ function on10Tick(payload: {
   }
 }
 
+type TickPayloadFull = Parameters<typeof onTickPayload>[0]
+type TenTickPayload = Parameters<typeof on10Tick>[0]
+
+function onInstantBacktest(batch: {
+  ticks: TickPayloadFull[]
+  ten_ticks: TenTickPayload[]
+  strategy_statuses: (StrategySnapshot & { time: number })[]
+}) {
+  const ticks = batch.ticks ?? []
+  if (ticks.length > 0) {
+    onTickPayload(ticks[ticks.length - 1]!)
+  }
+  const tens = batch.ten_ticks ?? []
+  if (tens.length > 0) {
+    on10Tick(tens[tens.length - 1]!)
+  }
+  statusEvents.value = []
+  for (const row of batch.strategy_statuses ?? []) {
+    onStrategyStatus(row)
+  }
+}
+
 onMounted(() => {
   props.socket.on('tick', onTickPayload)
   props.socket.on('strategy_status', onStrategyStatus)
   props.socket.on('10-tick', on10Tick)
+  props.socket.on('instant_backtest', onInstantBacktest)
 })
 
 onUnmounted(() => {
   props.socket.off('tick', onTickPayload)
   props.socket.off('strategy_status', onStrategyStatus)
   props.socket.off('10-tick', on10Tick)
+  props.socket.off('instant_backtest', onInstantBacktest)
 })
 </script>
 

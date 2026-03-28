@@ -86,9 +86,22 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 def main():
+    # Simulated + instant: no wall-clock sleep, one WebSocket payload when the run finishes (good for backtests).
+    # Simulated + not instant: historical spacing via sleep, per-tick emits (live-style chart).
+    SIMULATED = True
+    INSTANT_REPLAY = True
+    BATCH_MODE = SIMULATED and INSTANT_REPLAY
+
+    batch_ticks: list = []
+    batch_10: list = []
+    batch_100: list = []
+    batch_strategy_status: list = []
+    last_instant_payload: dict | None = None
+
     def emit_confluence(confluence):
         trigger.on_confluence(confluence)
-        socketio.emit("confluence", {"recent": list(setup.confluences)})
+        if not BATCH_MODE:
+            socketio.emit("confluence", {"recent": list(setup.confluences)})
 
     datastream = Datastream()
     strategy = Strategy()
@@ -101,6 +114,11 @@ def main():
     @socketio.on("connect")
     def on_connect():
         socketio.emit("confluence", {"recent": list(setup.confluences)})
+
+    @socketio.on("request_instant_snapshot")
+    def on_request_instant_snapshot():
+        if last_instant_payload is not None:
+            socketio.emit("instant_backtest", last_instant_payload)
 
     def on_tick(candle):
         nonlocal last_status
@@ -134,33 +152,61 @@ def main():
             },
             "strategy": strategy_block,
         }
-        socketio.emit("tick", payload)
+        if BATCH_MODE:
+            batch_ticks.append(payload)
+        else:
+            socketio.emit("tick", payload)
         if strategy.status != last_status:
             last_status = strategy.status
-            socketio.emit(
-                "strategy_status",
-                {**strategy_block, "time": candle["time"]},
-            )
+            status_msg = {**strategy_block, "time": candle["time"]}
+            if BATCH_MODE:
+                batch_strategy_status.append(status_msg)
+            else:
+                socketio.emit("strategy_status", status_msg)
 
     def on_10th_tick(candle):
         setup.on_10th_tick(candle)
-        socketio.emit(
-            "10-tick",
-            {
-                **candle,
-                "bar_delta": setup.bar_delta,
-                "avg_delta": setup.avg_delta,
-            },
-        )
+        msg_10 = {
+            **candle,
+            "bar_delta": setup.bar_delta,
+            "avg_delta": setup.avg_delta,
+        }
+        if BATCH_MODE:
+            batch_10.append(msg_10)
+        else:
+            socketio.emit("10-tick", msg_10)
 
     def on_100th_tick(candle):
         regime.on_100th_tick(candle)
-        socketio.emit("100-tick", {"c": candle, "vwap": regime.vwap[-1], "vwap_sigma": regime.vwap_std[-1] if len(regime.vwap_std) > 0 else 0})
+        msg_100 = {
+            "c": candle,
+            "vwap": regime.vwap[-1],
+            "vwap_sigma": regime.vwap_std[-1] if len(regime.vwap_std) > 0 else 0,
+        }
+        if BATCH_MODE:
+            batch_100.append(msg_100)
+        else:
+            socketio.emit("100-tick", msg_100)
+
+    def on_instant_backtest_complete() -> None:
+        nonlocal last_instant_payload
+        last_instant_payload = {
+            "ticks": batch_ticks,
+            "ten_ticks": batch_10,
+            "hundred_ticks": batch_100,
+            "strategy_statuses": batch_strategy_status,
+            "confluence": {"recent": list(setup.confluences)},
+        }
+        socketio.emit("instant_backtest", last_instant_payload)
 
     datastream.subscribe(1, on_tick)
     datastream.subscribe(10, on_10th_tick)
     datastream.subscribe(100, on_100th_tick)
-    datastream.start(simulated=True, instant=False)
+    datastream.start(
+        simulated=SIMULATED,
+        instant=INSTANT_REPLAY,
+        on_complete=on_instant_backtest_complete if BATCH_MODE else None,
+    )
 
 
 if __name__ == "__main__":

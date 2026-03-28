@@ -72,12 +72,18 @@ function queueScroll() {
   })
 }
 
+function onInstantBacktest(batch: { confluence?: { recent: ConfluenceEntry[] } }) {
+  if (batch.confluence) onConfluence(batch.confluence)
+}
+
 onMounted(() => {
   props.socket.on('confluence', onConfluence)
+  props.socket.on('instant_backtest', onInstantBacktest)
 })
 
 onUnmounted(() => {
   props.socket.off('confluence', onConfluence)
+  props.socket.off('instant_backtest', onInstantBacktest)
 })
 </script>
 
