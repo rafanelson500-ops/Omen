@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import Chart from './Chart.vue'
-import TradeLog from './TradeLog.vue'
+import ConfluenceLog from './ConfluenceLog.vue'
 import StrategyPanel from './StrategyPanel.vue'
 
 let url = 'http://localhost:8000'
@@ -24,7 +24,7 @@ onUnmounted(() => {
 <template>
   <div class="app">
     <header class="header">
-      <span class="title">RLAD Trading Bot</span>
+      <span class="title">Strategy dashboard</span>
       <span class="live-badge">
         <span class="live-dot" />
         LIVE
@@ -32,7 +32,7 @@ onUnmounted(() => {
     </header>
     <main class="main">
       <div class="left-panel">
-        <div class="panel-label">Market charts</div>
+        <div class="panel-label">1-tick · 10-tick · 100-tick</div>
         <div class="chart-wrap">
           <Chart v-if="socket" :socket="socket" />
         </div>
@@ -42,7 +42,7 @@ onUnmounted(() => {
           <StrategyPanel v-if="socket" :socket="socket" />
         </div>
         <div class="log-wrap">
-          <TradeLog v-if="socket" :socket="socket" />
+          <ConfluenceLog v-if="socket" :socket="socket" />
         </div>
       </div>
     </main>

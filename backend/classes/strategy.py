@@ -9,11 +9,14 @@ class Strategy:
         self.STARTING_ACCOUNT_SIZE = 50000
         self.TRAILING_DRAWDOWN = 2000
         self.ACCOUNT_BLOWN = False
-        self.COST_PER_TRADE = 0
+        self.COST_PER_TRADE = 10
+        self.CONTRACT_MULTIPLIER = 20
 
         self.status = "IDLE" # IDLE, IN_TRADE, COOLDOWN, ORDER_SUBMITTED
         self.side = 0 # 1, -1, 0
         self.position_size = 0
+        self.sl = 0
+        self.tp = 0
         self.pnl = 0.0
         self.entry_price = 0.0
         self.commission = 0.0
@@ -23,10 +26,13 @@ class Strategy:
         self.ruin_level = self.STARTING_ACCOUNT_SIZE - self.TRAILING_DRAWDOWN
         self.balance = self.STARTING_ACCOUNT_SIZE
 
-    def handle_signal(self, tick, side):
+    def handle_signal(self, side, sl, tp, risk):
         if self.status == "IDLE" and self.side == 0:
+            risk_num = (self.balance - self.ruin_level) * risk
             self.side = side
-            self.position_size = 1
+            self.position_size = max(1, int(risk_num / (sl * self.CONTRACT_MULTIPLIER)))
+            self.sl = -sl
+            self.tp = tp
             self.status = "ORDER_SUBMITTED"
         else:
             print("Error: In trade or on cooldown")
@@ -34,8 +40,10 @@ class Strategy:
     def exit_trade(self, tick):
         if self.side != 0 and self.status == "IN_TRADE":
             self.status = "COOLDOWN"
-            self.pnl += self.position_size * self.side * (tick["close"] - self.entry_price)
-            self.commission += self.COST_PER_TRADE
+            self.pnl += self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)
+            print(self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price))
+            self.commission += self.COST_PER_TRADE * self.position_size
+            self.balance -= self.COST_PER_TRADE * self.position_size
             self.entry_price = 0.0
             self.position_size = 0
             self.side = 0
@@ -59,14 +67,22 @@ class Strategy:
                     self.status = "IN_TRADE"
                     self.entry_price = tick["close"]
                     self.ticks_since_submission = 0
+                    self.trade_count += 1
                     print(f"Trade executed - {self.side * self.position_size} @ {self.entry_price}")
                 else:
                     print("Error: size or side not set")
 
         # Trade monitering
         if self.status == "IN_TRADE":
-            self.balance = (self.STARTING_ACCOUNT_SIZE + self.pnl) + (self.position_size * self.side * (tick["close"] - self.entry_price)) - self.commission
+            self.balance = (self.STARTING_ACCOUNT_SIZE + self.pnl) + (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) - self.commission
             # balance    = realized pnl +  unrealized pnl - commission
+
+            if (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) > self.tp * self.position_size * self.CONTRACT_MULTIPLIER:
+                self.exit_trade(tick)
+                print("Take profit hit")
+            elif (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) < self.sl * self.position_size * self.CONTRACT_MULTIPLIER:
+                self.exit_trade(tick)
+                print("Stop loss hit")
 
             self.ruin_level = max(self.ruin_level, self.balance - self.TRAILING_DRAWDOWN)
             if self.balance <= self.ruin_level:

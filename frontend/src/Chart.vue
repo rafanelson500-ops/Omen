@@ -44,6 +44,12 @@ let chart100: IChartApi | null = null
 let seriesLine: ISeriesApi<'Line'> | null = null
 let series10: ISeriesApi<'Candlestick'> | null = null
 let series100: ISeriesApi<'Candlestick'> | null = null
+let seriesVWAP: ISeriesApi<'Line'> | null = null
+let seriesVWAPsigplus1: ISeriesApi<'Line'> | null = null
+let seriesVWAPsigminus1: ISeriesApi<'Line'> | null = null
+let seriesVWAPsigplus2: ISeriesApi<'Line'> | null = null
+let seriesVWAPsigminus2: ISeriesApi<'Line'> | null = null
+let vwapLineSeeded = false
 
 let lastTimeLine = -Infinity
 let lastTime10 = -Infinity
@@ -69,11 +75,22 @@ function applySignalMarkers() {
   markerApi?.setMarkers?.(signalMarkers)
 }
 
-function on1Tick(c: CandleMsg) {
+type TickPayload = {
+  tick: { time: number; value: number }
+}
+
+type HundredTickPayload = {
+  c: CandleMsg
+  vwap: number
+  vwap_sigma: number
+}
+
+function onTickMessage(payload: TickPayload) {
+  const c = payload.tick
   if (!seriesLine || !chartLine) return
   const t = ensureMonotonic(c.time, lastTimeLine)
   lastTimeLine = t
-  seriesLine.update({ time: t as UTCTimestamp, value: c.close })
+  seriesLine.update({ time: t as UTCTimestamp, value: c.value })
   chartLine.timeScale().scrollToRealTime()
 }
 
@@ -91,8 +108,9 @@ function on10Tick(c: CandleMsg) {
   chart10.timeScale().scrollToRealTime()
 }
 
-function on100Tick(c: CandleMsg) {
-  if (!series100 || !chart100) return
+function on100Tick(payload: HundredTickPayload) {
+  if (!series100 || !chart100 || !seriesVWAP || !seriesVWAPsigplus1 || !seriesVWAPsigminus1 || !seriesVWAPsigplus2 || !seriesVWAPsigminus2) return
+  const { c, vwap, vwap_sigma } = payload
   const t = ensureMonotonic(c.time, lastTime100)
   lastTime100 = t
   series100.update({
@@ -102,7 +120,22 @@ function on100Tick(c: CandleMsg) {
     low: c.low,
     close: c.close,
   })
-  chart100.timeScale().scrollToRealTime()
+  if (Number.isFinite(vwap)) {
+    if (!vwapLineSeeded) {
+      seriesVWAP.setData([{ time: t as UTCTimestamp, value: vwap }])
+      seriesVWAPsigplus1.setData([{ time: t as UTCTimestamp, value: vwap + vwap_sigma }])
+      seriesVWAPsigminus1.setData([{ time: t as UTCTimestamp, value: vwap - vwap_sigma }])
+      seriesVWAPsigplus2.setData([{ time: t as UTCTimestamp, value: vwap + 2 * vwap_sigma }])
+      seriesVWAPsigminus2.setData([{ time: t as UTCTimestamp, value: vwap - 2 * vwap_sigma }])
+      vwapLineSeeded = true
+    } else {
+      seriesVWAP.update({ time: t as UTCTimestamp, value: vwap })
+      seriesVWAPsigplus1.update({ time: t as UTCTimestamp, value: vwap + vwap_sigma })
+      seriesVWAPsigminus1.update({ time: t as UTCTimestamp, value: vwap - vwap_sigma })
+      seriesVWAPsigplus2.update({ time: t as UTCTimestamp, value: vwap + 2 * vwap_sigma })
+      seriesVWAPsigminus2.update({ time: t as UTCTimestamp, value: vwap - 2 * vwap_sigma })
+    }
+  }
 }
 
 onMounted(() => {
@@ -124,6 +157,39 @@ onMounted(() => {
   series100 = chart100.addSeries(CandlestickSeries, {
     ...candlestickSeriesOptions,
   })
+
+
+  seriesVWAP = chart100.addSeries(LineSeries, {
+    color: "white",
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+  })
+  seriesVWAPsigplus1 = chart100.addSeries(LineSeries, {
+    color: "yellow",
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+  })
+  seriesVWAPsigminus1 = chart100.addSeries(LineSeries, {
+    color: "yellow",
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+  })
+  seriesVWAPsigplus2 = chart100.addSeries(LineSeries, {
+    color: "orange",
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+  })
+  seriesVWAPsigminus2 = chart100.addSeries(LineSeries, {
+    color: "orange",
+    lineWidth: 2,
+    crosshairMarkerVisible: true,
+    lastValueVisible: true,
+  })
+
   const markerFactory = LightweightCharts as unknown as {
     createSeriesMarkers?: (
       series: ISeriesApi<'Candlestick'>,
@@ -132,13 +198,13 @@ onMounted(() => {
   }
   markerApi = markerFactory.createSeriesMarkers?.(series100, signalMarkers) ?? null
 
-  props.socket.on('1-tick', on1Tick)
+  props.socket.on('tick', onTickMessage)
   props.socket.on('10-tick', on10Tick)
   props.socket.on('100-tick', on100Tick)
 })
 
 onUnmounted(() => {
-  props.socket.off('1-tick', on1Tick)
+  props.socket.off('tick', onTickMessage)
   props.socket.off('10-tick', on10Tick)
   props.socket.off('100-tick', on100Tick)
   chartLine?.remove()
@@ -150,6 +216,12 @@ onUnmounted(() => {
   seriesLine = null
   series10 = null
   series100 = null
+  seriesVWAP = null
+  seriesVWAPsigplus1 = null
+  seriesVWAPsigminus1 = null
+  seriesVWAPsigplus2 = null
+  seriesVWAPsigminus2 = null
+  vwapLineSeeded = false
   markerApi = null
   signalMarkers.length = 0
 })
@@ -159,8 +231,8 @@ onUnmounted(() => {
   <div class="charts-dashboard">
     <section class="panel panel--primary">
       <header class="panel-head">
-        <span class="panel-title">Tick close</span>
-        <span class="panel-hint">1-tick → line</span>
+        <span class="panel-title">1-tick</span>
+        <span class="panel-hint">last close → line</span>
       </header>
       <div class="panel-chart" ref="lineHost" />
     </section>

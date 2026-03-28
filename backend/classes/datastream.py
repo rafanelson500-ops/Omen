@@ -12,7 +12,7 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "ESM6"
+symbol = "NQM6"
 
 class Datastream:
     def __init__(self) -> None:
@@ -75,16 +75,19 @@ class Datastream:
                         "volume": 0.0,
                         "buy_volume": 0.0,
                         "sell_volume": 0.0,
+                        "price_levels": {},
                         "ticks": 0,
                         "size": size,
                         "side": side,
                     }
+                    self.candle_states[n]["price_levels"][price] = size
                 else:
                     self.candle_states[n]["high"] = max(self.candle_states[n]["high"], price)
                     self.candle_states[n]["low"] = min(self.candle_states[n]["low"], price)
                     self.candle_states[n]["close"] = price
                     self.candle_states[n]["size"] = size
                     self.candle_states[n]["side"] = side
+                    self.candle_states[n]["price_levels"][price] = self.candle_states[n]["price_levels"].get(price, 0.0) + size
 
                 self.candle_states[n]["volume"] += size
                 self.candle_states[n]["ticks"] += 1

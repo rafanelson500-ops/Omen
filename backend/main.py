@@ -75,7 +75,10 @@ Pipeline:
 """
 from classes.datastream import Datastream
 from classes.microstate import Microstate
+from classes.regime import Regime
 from classes.strategy import Strategy
+from classes.setup import Setup
+from classes.trigger import Trigger
 from flask import Flask
 from flask_socketio import SocketIO
 
@@ -83,31 +86,73 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 def main():
+    def emit_confluence(confluence):
+        trigger.on_confluence(confluence)
+        socketio.emit("confluence", {"recent": list(setup.confluences)})
+
     datastream = Datastream()
     strategy = Strategy()
-    microstate = Microstate(strategy.handle_signal)
+    regime = Regime()
+    setup = Setup(on_confluence=emit_confluence)
+    microstate = Microstate(setup.push_signal)
+    trigger = Trigger(microstate, setup, regime, strategy)
+    last_status = strategy.status
+
+    @socketio.on("connect")
+    def on_connect():
+        socketio.emit("confluence", {"recent": list(setup.confluences)})
 
     def on_tick(candle):
+        nonlocal last_status
         microstate.update(candle)
         strategy.on_tick(candle)
-        # socketio.emit("1-tick", candle)
+        trigger.on_tick(candle)
+        strategy_block = {
+            "status": strategy.status,
+            "side": strategy.side,
+            "position_size": strategy.position_size,
+            "pnl": strategy.pnl,
+            "entry_price": strategy.entry_price,
+            "commission": strategy.commission,
+            "trade_count": strategy.trade_count,
+            "cooldown_ticks": strategy.cooldown_ticks,
+            "balance": strategy.balance,
+            "ruin_level": strategy.ruin_level,
+            "account_blown": strategy.ACCOUNT_BLOWN,
+        }
+        payload = {
+            "tick": {
+                "time": candle["time"],
+                "value": candle["close"],
+            },
+            "microstate": {
+                "tps": microstate.tps[-1] if len(microstate.tps) > 0 else 0,
+                "average_tps": microstate.average_tps,
+                "aggression_efficiency": microstate.aggression_efficiency[-1]
+                if len(microstate.aggression_efficiency) > 0
+                else 0,
+            },
+            "strategy": strategy_block,
+        }
+        socketio.emit("tick", payload)
+        if strategy.status != last_status:
+            last_status = strategy.status
+            socketio.emit(
+                "strategy_status",
+                {**strategy_block, "time": candle["time"]},
+            )
 
     def on_10th_tick(candle):
-        pass
-        # print(10)
-        # socketio.emit("10-tick", candle)
-        # Update setup state
+        socketio.emit("10-tick", candle)
 
     def on_100th_tick(candle):
-        pass
-        # print(100)
-        # socketio.emit("100-tick", candle)
-        # Update regime state
+        regime.on_100th_tick(candle)
+        socketio.emit("100-tick", {"c": candle, "vwap": regime.vwap[-1], "vwap_sigma": regime.vwap_std[-1] if len(regime.vwap_std) > 0 else 0})
 
     datastream.subscribe(1, on_tick)
     datastream.subscribe(10, on_10th_tick)
     datastream.subscribe(100, on_100th_tick)
-    datastream.start(simulated=False)
+    datastream.start(simulated=True)
 
 
 if __name__ == "__main__":

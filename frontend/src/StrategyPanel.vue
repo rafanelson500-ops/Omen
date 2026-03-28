@@ -6,197 +6,219 @@ const props = defineProps<{
   socket: Socket
 }>()
 
-type StrategyState = {
-  state: 'IDLE' | 'SETUP_FOUND' | 'WAITING_TRIGGER' | 'IN_TRADE' | 'EXIT'
-  side: 'long' | 'short' | null
-  entryGateOpen: boolean
-  killFlags: string[]
+type MicrostateSnapshot = {
+  tps: number
+  average_tps: number
+  aggression_efficiency: number
 }
 
-type StrategyRegime = {
-  tradable: boolean
-  type: 'trend' | 'chop'
-  volatility: 'low' | 'medium' | 'high'
-  reasons: string[]
-  movement_ratio?: number
-  direction_consistency?: number
+type StrategySnapshot = {
+  status: string
+  side: number
+  position_size: number
+  pnl: number
+  entry_price: number
+  commission: number
+  trade_count: number
+  cooldown_ticks: number
+  balance: number
+  ruin_level: number
+  account_blown: boolean
 }
 
-type StrategySetup = {
-  type: 'trend' | 'absorption' | null
-  direction: 'long' | 'short' | null
-  quality: number
-  reasons: string[]
+type StatusEvent = {
+  time: number
+  status: string
+  side: number
 }
 
-type StrategyMicro = {
-  pressure: number
-  absorption: number
-  volatility: number
-}
-
-type DecisionEvent = {
-  kind: string
-  ts: number
-  [key: string]: unknown
-}
-
-const states: StrategyState['state'][] = ['IDLE', 'SETUP_FOUND', 'WAITING_TRIGGER', 'IN_TRADE', 'EXIT']
-
-const strategyState = ref<StrategyState>({
-  state: 'IDLE',
-  side: null,
-  entryGateOpen: false,
-  killFlags: [],
+const micro = ref<MicrostateSnapshot>({
+  tps: 0,
+  average_tps: 0,
+  aggression_efficiency: 0,
 })
-const regime = ref<StrategyRegime>({
-  tradable: false,
-  type: 'chop',
-  volatility: 'low',
-  reasons: ['warming_up'],
+
+const strategy = ref<StrategySnapshot>({
+  status: 'IDLE',
+  side: 0,
+  position_size: 0,
+  pnl: 0,
+  entry_price: 0,
+  commission: 0,
+  trade_count: 0,
+  cooldown_ticks: 0,
+  balance: 50000,
+  ruin_level: 48000,
+  account_blown: false,
 })
-const setup = ref<StrategySetup>({
-  type: null,
-  direction: null,
-  quality: 0,
-  reasons: ['warming_up'],
+
+const lastMark = ref<number | null>(null)
+const statusEvents = ref<StatusEvent[]>([])
+
+const sideLabel = computed(() => {
+  const s = strategy.value.side
+  if (s === 1) return 'LONG'
+  if (s === -1) return 'SHORT'
+  return '—'
 })
-const micro = ref<StrategyMicro>({
-  pressure: 0,
-  absorption: 0,
-  volatility: 0,
+
+const unrealizedPnl = computed(() => {
+  const st = strategy.value.status
+  if (st !== 'IN_TRADE' || strategy.value.side === 0 || lastMark.value == null) return 0
+  const { position_size: q, side, entry_price: e } = strategy.value
+  return q * side * 20 * (lastMark.value - e)
 })
-const decisions = ref<DecisionEvent[]>([])
 
-const setupQualityPct = computed(() => Math.max(0, Math.min(100, Math.round(setup.value.quality * 100))))
-const pressurePct = computed(() => Math.max(0, Math.min(100, Math.round(((micro.value.pressure + 1) / 2) * 100))))
-const absorptionPct = computed(() => Math.max(0, Math.min(100, Math.round(micro.value.absorption * 100))))
+const statusClass = computed(() => {
+  const s = strategy.value.status
+  if (s === 'IN_TRADE') return 'pill--trade'
+  if (s === 'ORDER_SUBMITTED') return 'pill--order'
+  if (s === 'COOLDOWN') return 'pill--cooldown'
+  return 'pill--idle'
+})
 
-function labelize(reason: string): string {
-  return reason.split('_').join(' ')
+function fmtNum(n: number, d = 2) {
+  if (!Number.isFinite(n)) return '—'
+  return n.toFixed(d)
 }
 
-function pushDecision(event: DecisionEvent) {
-  decisions.value.push(event)
-  if (decisions.value.length > 24) {
-    decisions.value.shift()
-  }
+function fmtTs(t: number) {
+  return new Date(t * 1000).toISOString().slice(11, 23)
 }
 
-function onState(payload: StrategyState) {
-  strategyState.value = payload
+function onTickPayload(payload: {
+  tick: { time: number; value: number }
+  microstate: MicrostateSnapshot
+  strategy: StrategySnapshot
+}) {
+  lastMark.value = payload.tick.value
+  micro.value = payload.microstate
+  strategy.value = payload.strategy
 }
 
-function onRegime(payload: StrategyRegime) {
-  regime.value = payload
-}
-
-function onSetup(payload: StrategySetup) {
-  setup.value = payload
-}
-
-function onMicro(payload: StrategyMicro) {
-  micro.value = payload
-}
-
-function onDecision(payload: DecisionEvent) {
-  pushDecision(payload)
+function onStrategyStatus(payload: StrategySnapshot & { time: number }) {
+  const { time, ...rest } = payload
+  strategy.value = rest
+  statusEvents.value.push({ time, status: rest.status, side: rest.side })
+  if (statusEvents.value.length > 32) statusEvents.value.shift()
 }
 
 onMounted(() => {
-  props.socket.on('strategy_state', onState)
-  props.socket.on('strategy_regime', onRegime)
-  props.socket.on('strategy_setup', onSetup)
-  props.socket.on('strategy_microstate', onMicro)
-  props.socket.on('strategy_decision', onDecision)
+  props.socket.on('tick', onTickPayload)
+  props.socket.on('strategy_status', onStrategyStatus)
 })
 
 onUnmounted(() => {
-  props.socket.off('strategy_state', onState)
-  props.socket.off('strategy_regime', onRegime)
-  props.socket.off('strategy_setup', onSetup)
-  props.socket.off('strategy_microstate', onMicro)
-  props.socket.off('strategy_decision', onDecision)
+  props.socket.off('tick', onTickPayload)
+  props.socket.off('strategy_status', onStrategyStatus)
 })
 </script>
 
 <template>
-  <section class="strategy-panel">
-    <header class="panel-head">
-      <span class="panel-title">Strategy dashboard</span>
-      <span class="gate" :class="{ 'gate--open': strategyState.entryGateOpen }">
-        {{ strategyState.entryGateOpen ? 'ENTRY GATE OPEN' : 'ENTRY GATE CLOSED' }}
-      </span>
+  <section class="strategy-dashboard">
+    <header class="head">
+      <div class="head-left">
+        <span class="title">Strategy</span>
+        <span class="pill" :class="statusClass">{{ strategy.status }}</span>
+        <span v-if="strategy.account_blown" class="pill pill--blown">ACCOUNT BLOWN</span>
+      </div>
+      <div class="head-right">
+        <span class="side-tag" :data-side="strategy.side">{{ sideLabel }}</span>
+      </div>
     </header>
 
-    <div class="state-row">
-      <span
-        v-for="s in states"
-        :key="s"
-        class="state-chip"
-        :class="{ 'state-chip--active': strategyState.state === s }"
-      >
-        {{ s }}
-      </span>
+    <div class="grid">
+      <article class="card card--micro">
+        <h3 class="card-h">Microstate <span class="live">live</span></h3>
+        <dl class="kv">
+          <div class="row">
+            <dt>TPS</dt>
+            <dd>{{ fmtNum(micro.tps, 3) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Avg TPS (rolling)</dt>
+            <dd>{{ fmtNum(micro.average_tps, 3) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Aggression efficiency</dt>
+            <dd>{{ fmtNum(micro.aggression_efficiency, 6) }}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="card card--account">
+        <h3 class="card-h">Account &amp; risk</h3>
+        <dl class="kv">
+          <div class="row">
+            <dt>Balance</dt>
+            <dd>{{ fmtNum(strategy.balance, 2) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Ruin level</dt>
+            <dd>{{ fmtNum(strategy.ruin_level, 2) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Realized P&amp;L</dt>
+            <dd :class="strategy.pnl >= 0 ? 'pos' : 'neg'">{{ fmtNum(strategy.pnl, 2) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Unrealized P&amp;L</dt>
+            <dd :class="unrealizedPnl >= 0 ? 'pos' : 'neg'">{{ fmtNum(unrealizedPnl, 2) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Commission (cumulative)</dt>
+            <dd>{{ fmtNum(strategy.commission, 2) }}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="card card--trade">
+        <h3 class="card-h">Position</h3>
+        <dl class="kv">
+          <div class="row">
+            <dt>Size</dt>
+            <dd>{{ strategy.position_size }}</dd>
+          </div>
+          <div class="row">
+            <dt>Entry</dt>
+            <dd>{{ strategy.entry_price > 0 ? fmtNum(strategy.entry_price, 2) : '—' }}</dd>
+          </div>
+          <div class="row">
+            <dt>Mark</dt>
+            <dd>{{ lastMark != null ? fmtNum(lastMark, 2) : '—' }}</dd>
+          </div>
+          <div class="row">
+            <dt>Trades (count)</dt>
+            <dd>{{ strategy.trade_count }}</dd>
+          </div>
+          <div class="row">
+            <dt>Cooldown ticks</dt>
+            <dd>
+              {{ strategy.status === 'COOLDOWN' ? strategy.cooldown_ticks : '—' }}
+            </dd>
+          </div>
+        </dl>
+      </article>
     </div>
 
-    <div class="cards">
-      <article class="card">
-        <div class="card-title">Regime</div>
-        <div class="line">
-          <span class="k">tradable</span><span :class="regime.tradable ? 'v v--ok' : 'v v--bad'">{{ regime.tradable }}</span>
-        </div>
-        <div class="line"><span class="k">type</span><span class="v">{{ regime.type }}</span></div>
-        <div class="line"><span class="k">volatility</span><span class="v">{{ regime.volatility }}</span></div>
-        <div class="tags">
-          <span v-for="r in regime.reasons" :key="r" class="tag">{{ labelize(r) }}</span>
-        </div>
-      </article>
-
-      <article class="card">
-        <div class="card-title">Setup</div>
-        <div class="line"><span class="k">type</span><span class="v">{{ setup.type ?? 'none' }}</span></div>
-        <div class="line"><span class="k">direction</span><span class="v">{{ setup.direction ?? '-' }}</span></div>
-        <div class="meter">
-          <div class="meter-label">quality {{ setupQualityPct }}%</div>
-          <div class="meter-track"><div class="meter-fill" :style="{ width: `${setupQualityPct}%` }" /></div>
-        </div>
-        <div class="tags">
-          <span v-for="r in setup.reasons" :key="r" class="tag">{{ labelize(r) }}</span>
-        </div>
-      </article>
-
-      <article class="card">
-        <div class="card-title">Microstate</div>
-        <div class="line"><span class="k">pressure</span><span class="v">{{ micro.pressure.toFixed(3) }}</span></div>
-        <div class="meter">
-          <div class="meter-label">pressure balance</div>
-          <div class="meter-track"><div class="meter-fill meter-fill--pressure" :style="{ width: `${pressurePct}%` }" /></div>
-        </div>
-        <div class="line"><span class="k">absorption</span><span class="v">{{ micro.absorption.toFixed(3) }}</span></div>
-        <div class="meter">
-          <div class="meter-label">absorption</div>
-          <div class="meter-track"><div class="meter-fill meter-fill--absorption" :style="{ width: `${absorptionPct}%` }" /></div>
-        </div>
-        <div class="line"><span class="k">volatility</span><span class="v">{{ micro.volatility.toFixed(3) }}</span></div>
-      </article>
-    </div>
-
-    <article class="timeline">
-      <div class="timeline-title">Decision timeline</div>
-      <div v-if="decisions.length === 0" class="empty">Waiting for strategy events...</div>
-      <div v-else class="timeline-list">
-        <div v-for="(d, i) in [...decisions].reverse()" :key="i" class="timeline-item">
-          <span class="timeline-kind">{{ labelize(d.kind) }}</span>
-          <span class="timeline-ts">{{ Number(d.ts).toFixed(3) }}</span>
-        </div>
-      </div>
+    <article class="events">
+      <h3 class="events-h">Trade status</h3>
+      <p v-if="statusEvents.length === 0" class="events-empty">Status changes appear here (e.g. IDLE → ORDER_SUBMITTED → IN_TRADE).</p>
+      <ul v-else class="events-list">
+        <li v-for="(e, i) in [...statusEvents].reverse()" :key="i" class="events-item">
+          <span class="events-ts">{{ fmtTs(e.time) }}</span>
+          <span class="events-st">{{ e.status }}</span>
+          <span class="events-side" :data-side="e.side">{{
+            e.side === 1 ? 'LONG' : e.side === -1 ? 'SHORT' : '—'
+          }}</span>
+        </li>
+      </ul>
     </article>
   </section>
 </template>
 
 <style scoped>
-.strategy-panel {
+.strategy-dashboard {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -204,17 +226,26 @@ onUnmounted(() => {
   background: linear-gradient(180deg, #0f1826 0%, #101928 100%);
 }
 
-.panel-head {
+.head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.35);
+  flex-shrink: 0;
 }
 
-.panel-title {
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -222,196 +253,231 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
-.gate {
+.pill {
   font-size: 10px;
-  letter-spacing: 0.05em;
   font-weight: 700;
-  color: #ef4444;
-}
-
-.gate--open {
-  color: #22c55e;
-}
-
-.state-row {
-  display: flex;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #3d5169 transparent;
-}
-
-.state-chip {
-  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 6px;
   border: 1px solid #334155;
-  padding: 2px 6px;
-  border-radius: 999px;
+  color: #cbd5e1;
+}
+
+.pill--idle {
+  border-color: #475569;
   color: #94a3b8;
-  white-space: nowrap;
 }
 
-.state-chip--active {
-  border-color: #3b82f6;
-  color: #bfdbfe;
-  background: rgba(59, 130, 246, 0.2);
+.pill--order {
+  border-color: #ca8a04;
+  color: #fde047;
+  background: rgba(202, 138, 4, 0.12);
 }
 
-.cards {
+.pill--trade {
+  border-color: #2563eb;
+  color: #93c5fd;
+  background: rgba(37, 99, 235, 0.15);
+}
+
+.pill--cooldown {
+  border-color: #7c3aed;
+  color: #c4b5fd;
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.pill--blown {
+  border-color: #b91c1c;
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.2);
+}
+
+.side-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.side-tag[data-side='1'] {
+  color: #4ade80;
+}
+
+.side-tag[data-side='-1'] {
+  color: #f87171;
+}
+
+.side-tag[data-side='0'] {
+  color: #64748b;
+}
+
+.grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  max-height: 42%;
+  max-height: 52%;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #3d5169 #0d1520;
+}
+
+@media (min-width: 520px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .card--micro {
+    grid-column: 1 / -1;
+  }
 }
 
 .card {
   background: rgba(26, 35, 50, 0.92);
   border: 1px solid rgba(71, 85, 105, 0.55);
   border-radius: 8px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  padding: 8px 10px;
 }
 
-.card-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #e2e8f0;
-}
-
-.line {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-}
-
-.k {
-  color: #94a3b8;
-}
-
-.v {
-  color: #e2e8f0;
-  font-variant-numeric: tabular-nums;
-}
-
-.v--ok {
-  color: #22c55e;
-}
-
-.v--bad {
-  color: #ef4444;
-}
-
-.meter {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.meter-label {
-  font-size: 10px;
-  color: #94a3b8;
-  letter-spacing: 0.04em;
-}
-
-.meter-track {
-  height: 6px;
-  border-radius: 999px;
-  background: #0f172a;
-  border: 1px solid #334155;
-  overflow: hidden;
-}
-
-.meter-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #38bdf8, #60a5fa);
-}
-
-.meter-fill--pressure {
-  background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e);
-}
-
-.meter-fill--absorption {
-  background: linear-gradient(90deg, #60a5fa, #a78bfa);
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.tag {
-  font-size: 10px;
-  color: #cbd5e1;
-  border: 1px solid #334155;
-  border-radius: 999px;
-  padding: 2px 6px;
-}
-
-.timeline {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 8px 10px 10px;
-  background: rgba(13, 21, 32, 0.18);
-}
-
-.timeline-title {
+.card-h {
   font-size: 11px;
   font-weight: 700;
   color: #e2e8f0;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.timeline-list {
-  min-height: 0;
-  overflow-y: auto;
+.live {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #22c55e;
+}
+
+.live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  margin-right: 4px;
+  vertical-align: middle;
+  box-shadow: 0 0 6px #22c55e;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.kv {
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: #3d5169 #0d1520;
 }
 
-.timeline-item {
+.row {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  border: 1px solid rgba(71, 85, 105, 0.6);
-  border-radius: 6px;
-  background: #1a2332;
-  padding: 6px 8px;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
 }
 
-.timeline-kind {
-  color: #cbd5e1;
-}
-
-.timeline-ts {
+dt {
+  margin: 0;
   color: #94a3b8;
+}
+
+dd {
+  margin: 0;
+  color: #e2e8f0;
   font-variant-numeric: tabular-nums;
 }
 
-.empty {
+.pos {
+  color: #4ade80;
+}
+
+.neg {
+  color: #f87171;
+}
+
+.events {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 10px;
+}
+
+.events-h {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+
+.events-empty {
   font-size: 12px;
   color: #64748b;
 }
 
-@media (max-width: 980px) {
-  .cards {
-    grid-template-columns: 1fr;
-    max-height: none;
-  }
+.events-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: #3d5169 #0d1520;
+}
+
+.events-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 6px;
+  background: #1a2332;
+  padding: 5px 8px;
+}
+
+.events-ts {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.events-st {
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.events-side[data-side='1'] {
+  color: #4ade80;
+}
+
+.events-side[data-side='-1'] {
+  color: #f87171;
+}
+
+.events-side[data-side='0'] {
+  color: #64748b;
 }
 </style>
