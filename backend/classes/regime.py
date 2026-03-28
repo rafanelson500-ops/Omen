@@ -53,7 +53,7 @@ def vwap(candles):
 
 class Regime:
     def __init__(self):
-        self.VWAP_WINDOW = 250
+        self.VWAP_WINDOW = 30
 
         self.candles = deque(maxlen=1000)
         self.vwap = deque()

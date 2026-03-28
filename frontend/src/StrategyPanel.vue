@@ -12,6 +12,11 @@ type MicrostateSnapshot = {
   aggression_efficiency: number
 }
 
+type SetupDeltaSnapshot = {
+  bar_delta: number
+  avg_delta: number
+}
+
 type StrategySnapshot = {
   status: string
   side: number
@@ -36,6 +41,11 @@ const micro = ref<MicrostateSnapshot>({
   tps: 0,
   average_tps: 0,
   aggression_efficiency: 0,
+})
+
+const setupDelta = ref<SetupDeltaSnapshot>({
+  bar_delta: 0,
+  avg_delta: 0,
 })
 
 const strategy = ref<StrategySnapshot>({
@@ -64,7 +74,12 @@ const sideLabel = computed(() => {
 
 const unrealizedPnl = computed(() => {
   const st = strategy.value.status
-  if (st !== 'IN_TRADE' || strategy.value.side === 0 || lastMark.value == null) return 0
+  if (
+    (st !== 'IN_TRADE' && st !== 'EXIT_ORDER_SUBMITTED') ||
+    strategy.value.side === 0 ||
+    lastMark.value == null
+  )
+    return 0
   const { position_size: q, side, entry_price: e } = strategy.value
   return q * side * 20 * (lastMark.value - e)
 })
@@ -72,7 +87,7 @@ const unrealizedPnl = computed(() => {
 const statusClass = computed(() => {
   const s = strategy.value.status
   if (s === 'IN_TRADE') return 'pill--trade'
-  if (s === 'ORDER_SUBMITTED') return 'pill--order'
+  if (s === 'ORDER_SUBMITTED' || s === 'EXIT_ORDER_SUBMITTED') return 'pill--order'
   if (s === 'COOLDOWN') return 'pill--cooldown'
   return 'pill--idle'
 })
@@ -103,14 +118,31 @@ function onStrategyStatus(payload: StrategySnapshot & { time: number }) {
   if (statusEvents.value.length > 32) statusEvents.value.shift()
 }
 
+function on10Tick(payload: {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  bar_delta?: number
+  avg_delta?: number
+}) {
+  setupDelta.value = {
+    bar_delta: payload.bar_delta ?? 0,
+    avg_delta: payload.avg_delta ?? 0,
+  }
+}
+
 onMounted(() => {
   props.socket.on('tick', onTickPayload)
   props.socket.on('strategy_status', onStrategyStatus)
+  props.socket.on('10-tick', on10Tick)
 })
 
 onUnmounted(() => {
   props.socket.off('tick', onTickPayload)
   props.socket.off('strategy_status', onStrategyStatus)
+  props.socket.off('10-tick', on10Tick)
 })
 </script>
 
@@ -142,6 +174,20 @@ onUnmounted(() => {
           <div class="row">
             <dt>Aggression efficiency</dt>
             <dd>{{ fmtNum(micro.aggression_efficiency, 6) }}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="card card--setup">
+        <h3 class="card-h">Setup <span class="setup-hint">10-tick bars</span></h3>
+        <dl class="kv">
+          <div class="row">
+            <dt>Bar Δ (close − open)</dt>
+            <dd :class="setupDelta.bar_delta >= 0 ? 'pos' : 'neg'">{{ fmtNum(setupDelta.bar_delta, 4) }}</dd>
+          </div>
+          <div class="row">
+            <dt>Avg Δ (rolling)</dt>
+            <dd :class="setupDelta.avg_delta >= 0 ? 'pos' : 'neg'">{{ fmtNum(setupDelta.avg_delta, 4) }}</dd>
           </div>
         </dl>
       </article>
@@ -322,12 +368,24 @@ onUnmounted(() => {
   scrollbar-color: #3d5169 #0d1520;
 }
 
+.setup-hint {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
 @media (min-width: 520px) {
   .grid {
     grid-template-columns: 1fr 1fr;
   }
 
   .card--micro {
+    grid-column: 1 / -1;
+  }
+
+  .card--setup {
     grid-column: 1 / -1;
   }
 }

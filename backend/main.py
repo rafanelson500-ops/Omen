@@ -143,7 +143,15 @@ def main():
             )
 
     def on_10th_tick(candle):
-        socketio.emit("10-tick", candle)
+        setup.on_10th_tick(candle)
+        socketio.emit(
+            "10-tick",
+            {
+                **candle,
+                "bar_delta": setup.bar_delta,
+                "avg_delta": setup.avg_delta,
+            },
+        )
 
     def on_100th_tick(candle):
         regime.on_100th_tick(candle)
@@ -152,7 +160,7 @@ def main():
     datastream.subscribe(1, on_tick)
     datastream.subscribe(10, on_10th_tick)
     datastream.subscribe(100, on_100th_tick)
-    datastream.start(simulated=True)
+    datastream.start(simulated=True, instant=False)
 
 
 if __name__ == "__main__":

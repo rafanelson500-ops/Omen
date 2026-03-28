@@ -4,11 +4,14 @@ import {
   createChart,
   LineSeries,
   CandlestickSeries,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import * as LightweightCharts from 'lightweight-charts'
 import { chartOptions, compactChartOptions, candlestickSeriesOptions, chartTheme } from './chartOptions'
 import type { Socket } from 'socket.io-client'
 
@@ -22,15 +25,8 @@ type CandleMsg = {
   high: number
   low: number
   close: number
-  [key: string]: number
-}
-
-type SignalMarker = {
-  time: UTCTimestamp
-  position: 'aboveBar' | 'belowBar'
-  color: string
-  shape: 'arrowUp' | 'arrowDown'
-  text: string
+  bar_delta?: number
+  avg_delta?: number
 }
 
 const lineHost = ref<HTMLDivElement | null>(null)
@@ -54,25 +50,32 @@ let vwapLineSeeded = false
 let lastTimeLine = -Infinity
 let lastTime10 = -Infinity
 let lastTime100 = -Infinity
-const signalMarkers: SignalMarker[] = []
-let markerApi: { setMarkers?: (markers: SignalMarker[]) => void } | null = null
+const seriesMarkers: SeriesMarker<Time>[] = []
+let markerPlugin: ISeriesMarkersPluginApi<Time> | null = null
+let lastMarkerTime = -Infinity
+let lastTradeSideForMarkers = 0
 
 const TIME_EPS = 1e-6
+const MAX_SERIES_MARKERS = 160
 
 function ensureMonotonic(t: number, last: number): number {
   return t > last ? t : last + TIME_EPS
 }
 
-function applySignalMarkers() {
-  if (!series100) return
+function pushMarkerTime(raw: number): Time {
+  const t = raw > lastMarkerTime ? raw : lastMarkerTime + TIME_EPS
+  lastMarkerTime = t
+  return t as Time
+}
 
-  const legacyApi = series100 as unknown as { setMarkers?: (markers: SignalMarker[]) => void }
-  if (legacyApi.setMarkers) {
-    legacyApi.setMarkers(signalMarkers)
-    return
+function trimMarkers() {
+  if (seriesMarkers.length > MAX_SERIES_MARKERS) {
+    seriesMarkers.splice(0, seriesMarkers.length - MAX_SERIES_MARKERS)
   }
+}
 
-  markerApi?.setMarkers?.(signalMarkers)
+function applySeriesMarkers() {
+  markerPlugin?.setMarkers(seriesMarkers)
 }
 
 type TickPayload = {
@@ -85,13 +88,46 @@ type HundredTickPayload = {
   vwap_sigma: number
 }
 
+type StrategyStatusPayload = {
+  time: number
+  status: string
+  side: number
+}
+
+function onStrategyStatus(payload: StrategyStatusPayload) {
+  if (!seriesLine) return
+  const { time, status, side } = payload
+  if (status === 'IN_TRADE' && side !== 0) {
+    lastTradeSideForMarkers = side
+    seriesMarkers.push({
+      time: pushMarkerTime(time),
+      position: side === 1 ? 'belowBar' : 'aboveBar',
+      color: side === 1 ? '#22c55e' : '#f87171',
+      shape: side === 1 ? 'arrowUp' : 'arrowDown',
+      text: 'Entry',
+    })
+    trimMarkers()
+    applySeriesMarkers()
+  } else if (status === 'COOLDOWN') {
+    const exitedLong = lastTradeSideForMarkers === 1
+    seriesMarkers.push({
+      time: pushMarkerTime(time),
+      position: exitedLong ? 'aboveBar' : 'belowBar',
+      color: '#a78bfa',
+      shape: 'circle',
+      text: 'Exit',
+    })
+    trimMarkers()
+    applySeriesMarkers()
+  }
+}
+
 function onTickMessage(payload: TickPayload) {
   const c = payload.tick
   if (!seriesLine || !chartLine) return
   const t = ensureMonotonic(c.time, lastTimeLine)
   lastTimeLine = t
   seriesLine.update({ time: t as UTCTimestamp, value: c.value })
-  chartLine.timeScale().scrollToRealTime()
 }
 
 function on10Tick(c: CandleMsg) {
@@ -190,23 +226,19 @@ onMounted(() => {
     lastValueVisible: true,
   })
 
-  const markerFactory = LightweightCharts as unknown as {
-    createSeriesMarkers?: (
-      series: ISeriesApi<'Candlestick'>,
-      markers: SignalMarker[],
-    ) => { setMarkers?: (markers: SignalMarker[]) => void }
-  }
-  markerApi = markerFactory.createSeriesMarkers?.(series100, signalMarkers) ?? null
+  markerPlugin = createSeriesMarkers(seriesLine, seriesMarkers)
 
   props.socket.on('tick', onTickMessage)
   props.socket.on('10-tick', on10Tick)
   props.socket.on('100-tick', on100Tick)
+  props.socket.on('strategy_status', onStrategyStatus)
 })
 
 onUnmounted(() => {
   props.socket.off('tick', onTickMessage)
   props.socket.off('10-tick', on10Tick)
   props.socket.off('100-tick', on100Tick)
+  props.socket.off('strategy_status', onStrategyStatus)
   chartLine?.remove()
   chart10?.remove()
   chart100?.remove()
@@ -222,8 +254,10 @@ onUnmounted(() => {
   seriesVWAPsigplus2 = null
   seriesVWAPsigminus2 = null
   vwapLineSeeded = false
-  markerApi = null
-  signalMarkers.length = 0
+  markerPlugin = null
+  seriesMarkers.length = 0
+  lastMarkerTime = -Infinity
+  lastTradeSideForMarkers = 0
 })
 </script>
 

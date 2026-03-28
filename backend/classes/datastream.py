@@ -24,7 +24,7 @@ class Datastream:
     def subscribe(self, n_ticks, cb_func) -> None:
         self.callbacks[n_ticks] = cb_func
 
-    def start(self, simulated = False, speed = 1) -> None:
+    def start(self, simulated = False, instant = False) -> None:
         if simulated:
             def sim():
                 trades = pd.read_csv("trades.csv")
@@ -41,7 +41,8 @@ class Datastream:
                     self._on_tick(tick)
                     if i + 1 < len(trades):
                         delay_s = (trades.iloc[i + 1]["ts_event"] - trades.iloc[i]["ts_event"]).total_seconds()
-                        time.sleep(max(0.0, delay_s) / speed)
+                        if not instant:
+                            time.sleep(max(0.0, delay_s)/5)
             self.thread = threading.Thread(target=sim)
             self.thread.daemon = True
             self.thread.start()
