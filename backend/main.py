@@ -35,12 +35,28 @@ def backtest(start_date, end_date):
     # distinct rows can become equal times and break lightweight-charts (strictly
     # increasing). Microseconds fit in JS integer-safe range; then dedupe + sort.
     short_df = short_df.copy()
-    short_df["time"] = (short_df["time"] // 1_000_000).astype("int64")
     short_df = short_df.sort_values("time").drop_duplicates(subset=["time"], keep="last")
 
     socketio.emit('backtest', {
-        "tick": short_df.to_dict(orient="records")
+        "tick": short_df.to_dict(orient="records"),
+        "10-tick": medium_df.to_dict(orient="records"),
+        "100-tick": long_df.to_dict(orient="records"),
     })
 
+def live():
+    def on_tick():
+        data = datastream.short_df.iloc[-1].to_dict(orient="records")
+        print(data)
+        socketio.emit('tick', data)
+    def on_medium_tick():
+        data = datastream.medium_df.iloc[-1].to_dict(orient="records")
+        socketio.emit('10-tick', data)
+    def on_long_tick():
+        data = datastream.long_df.iloc[-1].to_dict(orient="records")
+        socketio.emit('100-tick', data)
+    datastream = Datastream(on_tick, on_medium_tick, on_long_tick)
+    datastream.live()
+
 if __name__ == "__main__":
+    live()
     socketio.run(app, host="0.0.0.0", port=8000)
