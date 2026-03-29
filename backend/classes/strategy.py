@@ -9,12 +9,12 @@ class Strategy:
         self.TRADE_COOLDOWN_TICKS = 100
         self.TICK_LATENCY_SLIPPAGE = 1
         self.STARTING_ACCOUNT_SIZE = 10000
-        self.TRAILING_DRAWDOWN = 1000
+        self.TRAILING_DRAWDOWN = 10000
         self.ACCOUNT_BLOWN = False
         self.COST_PER_TRADE = 10
         self.CONTRACT_MULTIPLIER = 20
-        self.PROFIT_TARGET = 600
-        self.LOSS_LIMIT = 300
+        self.PROFIT_TARGET = 20000
+        self.LOSS_LIMIT = 500
 
         self.status = "WARMING_UP" # IDLE, IN_TRADE, COOLDOWN, ORDER_SUBMITTED, EXIT_ORDER_SUBMITTED
         self.side = 0 # 1, -1, 0
@@ -38,7 +38,7 @@ class Strategy:
         if self.status == "IDLE" and self.side == 0 and self.tradable:
             risk_num = (self.balance - self.ruin_level) * risk
             self.side = side
-            self.position_size = max(1, int(risk_num / (sl * self.CONTRACT_MULTIPLIER)))
+            self.position_size = 1
             self.sl = -sl
             self.tp = tp
             self.status = "ORDER_SUBMITTED"
