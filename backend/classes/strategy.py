@@ -116,13 +116,16 @@ class Strategy:
 
         # Trade monitering (EXIT_ORDER_SUBMITTED mark-to-market handled at start of tick)
         if self.status == "IN_TRADE":
-            self.balance = (self.STARTING_ACCOUNT_SIZE + self.pnl) + (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) - self.commission
+            unrealized_pnl = self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)
+            tp = self.tp * self.position_size * self.CONTRACT_MULTIPLIER
+            sl = self.sl * self.position_size * self.CONTRACT_MULTIPLIER
+            self.balance = (self.STARTING_ACCOUNT_SIZE + self.pnl) + unrealized_pnl - self.commission
             # balance    = realized pnl +  unrealized pnl - commission
             self.ruin_level = max(self.ruin_level, self.balance - self.TRAILING_DRAWDOWN)
 
-            if (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) > self.tp * self.position_size * self.CONTRACT_MULTIPLIER:
+            if unrealized_pnl > tp:
                 self.queue_exit("Take profit hit")
-            elif (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) < self.sl * self.position_size * self.CONTRACT_MULTIPLIER:
+            elif unrealized_pnl < sl or self.balance - self.STARTING_ACCOUNT_SIZE < -self.LOSS_LIMIT:
                 self.queue_exit("Stop loss hit")
 
             if self.balance <= self.ruin_level:
