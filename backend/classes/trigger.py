@@ -24,13 +24,17 @@ class Trigger:
              and self.recent_tick is not None:
                 self.status = "READY"
             else:
-                return      
+                return
 
+        vwap_sigma = self.regime.vwap_std[-1] if len(self.regime.vwap_std) > 0 else 0
 
+        if not self.regime.allows_vwap_mean_reversion():
+            self.ticks_since_overextension = 0
+            self.ticks_since_underextension = 0
+            return
 
         # VWAP Overextension -----------------------------------------------------
         #ENTRY
-        vwap_sigma = self.regime.vwap_std[-1] if len(self.regime.vwap_std) > 0 else 0
         if price > self.regime.vwap[-1] + self.VWAP_OVEREXTENSION_THRESHOLD * self.regime.vwap_std[-1]: # Price is above +sig2
             self.ticks_since_overextension += 1
         elif self.ticks_since_overextension > 0: # Price crossed back below +sig2
@@ -43,9 +47,6 @@ class Trigger:
         # if self.entry_code == "OVEREXTENSION" and self.strategy.status == "IN_TRADE":
         #     if confluence == "+ Aggression Extreme" and self.recent_tick["close"] > self.strategy.entry_price:
         #         self.strategy.queue_exit(f"Exiting trade due to Extreme Pos Agression & unrealized loss")
-
-
-
 
         # VWAP Under extension ---------------------------------------------------
         #ENTRY

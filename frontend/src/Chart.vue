@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   createChart,
   LineSeries,
@@ -32,6 +32,35 @@ type CandleMsg = {
 const lineHost = ref<HTMLDivElement | null>(null)
 const candle10Host = ref<HTMLDivElement | null>(null)
 const candle100Host = ref<HTMLDivElement | null>(null)
+
+const regimeLabel = ref('WARMING_UP')
+const regimeEfficiency = ref<number | null>(null)
+const regimeFlips = ref(0)
+
+function applyRegimeFromPayload(
+  r?: { label: string; efficiency?: number | null; flips?: number },
+) {
+  if (!r?.label) return
+  regimeLabel.value = r.label
+  regimeEfficiency.value =
+    r.efficiency != null && Number.isFinite(r.efficiency) ? r.efficiency : null
+  regimeFlips.value = typeof r.flips === 'number' ? r.flips : 0
+}
+
+const regimePillClass = computed(() => {
+  const L = regimeLabel.value
+  if (L === 'CHOPPY') return 'regime-pill--choppy'
+  if (L === 'TRENDING') return 'regime-pill--trending'
+  return 'regime-pill--warmup'
+})
+
+const regimeTooltip = computed(() => {
+  const parts = [regimeLabel.value.replaceAll('_', ' ')]
+  const e = regimeEfficiency.value
+  if (e != null) parts.push(`ER ${e.toFixed(2)}`)
+  parts.push(`flips ${regimeFlips.value}`)
+  return parts.join(' · ')
+})
 
 let chartLine: IChartApi | null = null
 let chart10: IChartApi | null = null
@@ -86,6 +115,11 @@ type HundredTickPayload = {
   c: CandleMsg
   vwap: number
   vwap_sigma: number
+  regime?: {
+    label: string
+    efficiency?: number | null
+    flips?: number
+  }
 }
 
 type StrategyStatusPayload = {
@@ -179,6 +213,7 @@ function on100Tick(payload: HundredTickPayload) {
       seriesVWAPsigminus2.update({ time: t as UTCTimestamp, value: vwap - 2 * vwap_sigma })
     }
   }
+  applyRegimeFromPayload(payload.regime)
 }
 
 function onInstantBacktest(batch: InstantBacktestPayload) {
@@ -245,8 +280,10 @@ function onInstantBacktest(batch: InstantBacktestPayload) {
     const vm1: { time: UTCTimestamp; value: number }[] = []
     const vp2: { time: UTCTimestamp; value: number }[] = []
     const vm2: { time: UTCTimestamp; value: number }[] = []
+    let lastRegime: HundredTickPayload['regime'] | undefined
     for (const payload of batch.hundred_ticks ?? []) {
       const { c, vwap, vwap_sigma } = payload
+      if (payload.regime) lastRegime = payload.regime
       const t = ensureMonotonic(c.time, last100)
       last100 = t
       hCandles.push({
@@ -279,6 +316,7 @@ function onInstantBacktest(batch: InstantBacktestPayload) {
     } else {
       vwapLineSeeded = false
     }
+    if (lastRegime) applyRegimeFromPayload(lastRegime)
   }
 
   seriesMarkers.length = 0
@@ -402,8 +440,17 @@ onUnmounted(() => {
       </section>
       <section class="panel panel--secondary">
         <header class="panel-head">
-          <span class="panel-title">100-tick</span>
-          <span class="panel-hint">OHLC</span>
+          <div class="panel-head-start">
+            <span class="panel-title">100-tick</span>
+            <span
+              class="regime-pill"
+              :class="regimePillClass"
+              :title="regimeTooltip"
+            >
+              {{ regimeLabel.replaceAll('_', ' ') }}
+            </span>
+          </div>
+          <span class="panel-hint">OHLC · VWAP</span>
         </header>
         <div class="panel-chart" ref="candle100Host" />
       </section>
@@ -471,11 +518,48 @@ onUnmounted(() => {
   color: #f1f5f9;
 }
 
+.panel-head-start {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .panel-hint {
   font-size: 10px;
   font-weight: 500;
   color: #64748b;
   letter-spacing: 0.04em;
+}
+
+.regime-pill {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  white-space: nowrap;
+}
+
+.regime-pill--warmup {
+  color: #94a3b8;
+  background: rgba(71, 85, 105, 0.35);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.regime-pill--choppy {
+  color: #fde68a;
+  background: rgba(180, 83, 9, 0.28);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.regime-pill--trending {
+  color: #a5f3fc;
+  background: rgba(8, 145, 178, 0.28);
+  border-color: rgba(34, 211, 238, 0.35);
 }
 
 .panel-chart {

@@ -73,6 +73,8 @@ Pipeline:
         place trade with quality based risk settings (5% on medium conviction, 10% on high conviction)
 
 """
+import math
+
 from classes.datastream import Datastream
 from classes.microstate import Microstate
 from classes.regime import Regime
@@ -178,10 +180,16 @@ def main():
 
     def on_100th_tick(candle):
         regime.on_100th_tick(candle)
+        eff = regime.regime_efficiency
         msg_100 = {
             "c": candle,
             "vwap": regime.vwap[-1],
             "vwap_sigma": regime.vwap_std[-1] if len(regime.vwap_std) > 0 else 0,
+            "regime": {
+                "label": regime.regime_label,
+                "efficiency": float(eff) if isinstance(eff, float) and math.isfinite(eff) else None,
+                "flips": regime.regime_flips,
+            },
         }
         if BATCH_MODE:
             batch_100.append(msg_100)
@@ -207,7 +215,6 @@ def main():
         instant=INSTANT_REPLAY,
         on_complete=on_instant_backtest_complete if BATCH_MODE else None,
     )
-
 
 if __name__ == "__main__":
     main()

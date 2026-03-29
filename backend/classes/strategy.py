@@ -120,7 +120,6 @@ class Strategy:
             # balance    = realized pnl +  unrealized pnl - commission
             self.ruin_level = max(self.ruin_level, self.balance - self.TRAILING_DRAWDOWN)
 
-        if self.status == "IN_TRADE":
             if (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) > self.tp * self.position_size * self.CONTRACT_MULTIPLIER:
                 self.queue_exit("Take profit hit")
             elif (self.position_size * self.side * self.CONTRACT_MULTIPLIER * (tick["close"] - self.entry_price)) < self.sl * self.position_size * self.CONTRACT_MULTIPLIER:
