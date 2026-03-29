@@ -8,114 +8,57 @@ import databento as db
 import pandas as pd
 import dotenv
 import threading
-
+import numpy as np
 dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "NQM6"
+symbol = "NQ.v.0"
 
 class Datastream:
     def __init__(self) -> None:
         print("Initializing Datastream Engine")
-        self.callbacks = {}
-        self.candle_states = {}
-        self.candle_counter = 0
 
-    def subscribe(self, n_ticks, cb_func) -> None:
-        self.callbacks[n_ticks] = cb_func
+    def historical(self, start_date, end_date):
+        client = db.Historical(DATABENTO_API_KEY)
+        print(f"Getting ticks from {start_date} to {end_date}")
+        ticks = client.timeseries.get_range(
+            dataset = dataset,
+            symbols = symbol,
+            stype_in = "continuous",
+            start = start_date,
+            end = end_date,
+            schema = "trades"   
+        )
+        short_df = ticks.to_df()[["ts_event", "size", "price", "side"]].dropna()
+        short_df.index = np.arange(1, len(short_df) + 1)
+        short_df["side"] = np.where(short_df["side"] == "B", 1, -1)
 
-    def start(
-        self,
-        simulated: bool = False,
-        instant: bool = False,
-        on_complete: Callable[[], None] | None = None,
-    ) -> None:
-        if simulated:
-            def sim():
-                try:
-                    trades = pd.read_csv("trades.csv")
-                    trades["ts_event"] = pd.to_datetime(trades["ts_event"], utc=True)
-                    class Tick:
-                        def __init__(self, price: Any, side: str, size: Any, ts_event: int) -> None:
-                            self.pretty_price = price
-                            self.side = side
-                            self.size = size
-                            self.ts_event = ts_event
-                    for i in range(len(trades)):
-                        ts_ns = int(trades.iloc[i]["ts_event"].value)
-                        tick = Tick(trades.iloc[i]["price"], trades.iloc[i]["side"], trades.iloc[i]["size"], ts_ns)
-                        self._on_tick(tick)
-                        if i + 1 < len(trades):
-                            delay_s = (trades.iloc[i + 1]["ts_event"] - trades.iloc[i]["ts_event"]).total_seconds()
-                            if not instant:
-                                time.sleep(max(0.0, delay_s))
-                finally:
-                    if on_complete is not None:
-                        on_complete()
-            self.thread = threading.Thread(target=sim)
-            self.thread.daemon = True
-            self.thread.start()
-        else:
-            self.client = db.Live(DATABENTO_API_KEY)
-            self.client.subscribe(
-                dataset=dataset,
-                schema="trades",
-                symbols=symbol,
-                stype_in="raw_symbol",
-            )
-            self.client.add_callback(self._on_tick)
-            self.client.start()
+        short_df["time"] = short_df["ts_event"].astype(int)
+        short_df["open"] = short_df["price"]
+        short_df["high"] = short_df["price"]
+        short_df["low"] = short_df["price"]
+        short_df["close"] = short_df["price"]
+        short_df["delta"] = short_df["size"] * short_df["side"]
 
-    def _on_tick(self, tick: Any) -> None:
-        try:
-            price = float(tick.pretty_price)
-            ts = float(tick.ts_event / 1_000_000_000)
-            size = float(getattr(tick, "size", 0.0))
-            side = str(getattr(tick, "side", "")).upper()
+        short_df.drop(columns=["price", "ts_event", "size", "side"], inplace=True)
 
-            self.candle_counter += 1
-            for n in self.callbacks.keys():
-                if n not in self.candle_states or "reset" in self.candle_states[n]: # initialize candle state for new n_ticks
-                    self.candle_states[n] = {
-                        "time": ts,
-                        "open": price,
-                        "high": price,
-                        "low": price,
-                        "close": price,
-                        "volume": 0.0,
-                        "buy_volume": 0.0,
-                        "sell_volume": 0.0,
-                        "price_levels": {},
-                        "ticks": 0,
-                        "size": size,
-                        "side": side,
-                    }
-                    self.candle_states[n]["price_levels"][price] = size
-                else:
-                    self.candle_states[n]["high"] = max(self.candle_states[n]["high"], price)
-                    self.candle_states[n]["low"] = min(self.candle_states[n]["low"], price)
-                    self.candle_states[n]["close"] = price
-                    self.candle_states[n]["size"] = size
-                    self.candle_states[n]["side"] = side
-                    self.candle_states[n]["price_levels"][price] = self.candle_states[n]["price_levels"].get(price, 0.0) + size
+        # Exact duplicate ts_event rows only. Does not fix JSON/JS: nanosecond ints
+        # exceed Number.MAX_SAFE_INTEGER; see main.py before socket emit.
+        short_df = short_df.drop_duplicates(subset=["time"], keep="last")
 
-                self.candle_states[n]["volume"] += size
-                self.candle_states[n]["ticks"] += 1
-                if side == "B":
-                    self.candle_states[n]["buy_volume"] += size
-                elif side == "A":
-                    self.candle_states[n]["sell_volume"] += size
+        medium_df = aggregate_ticks(short_df, 10)
+        long_df = aggregate_ticks(short_df, 100)
 
-                if self.candle_counter % n == 0:
-                    self._emit_candle(n)
+        return short_df, medium_df, long_df
 
-
-        except Exception as e:
-            print(e)
-
-    
-    def _emit_candle(self, n):
-        candle = self.candle_states[n]
-        self.callbacks[n](candle)
-        self.candle_states[n]["reset"] = True
+def aggregate_ticks(df, n):
+    df = df.copy()
+    return df.groupby(df.index // n).agg({
+        "time": "first",
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "delta": "sum"
+    })
