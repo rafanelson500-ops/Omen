@@ -311,7 +311,6 @@ onUnmounted(() => {
 }
 
 .tick-chart {
-  height: min(42vh, 480px);
-  min-height: 260px;
+  min-height: 80vh;
 }
 </style>

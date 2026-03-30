@@ -14,6 +14,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
+import { graphMappings } from './mappings'
 
 const props = defineProps<{
   socket: Socket
@@ -24,6 +25,7 @@ const props = defineProps<{
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: IChartApi | null = null
 const series = shallowRef<ISeriesApi<'Line'> | ISeriesApi<'Candlestick'> | null>(null)
+const extraSeries = shallowRef<Record<string, ISeriesApi<'Line'>>>({})
 
 let detachSocket: (() => void) | null = null
 
@@ -33,21 +35,45 @@ const priceFormatQuarter = { type: 'price' as const, minMove: 0.25, precision: 2
 /** Backend sends `time` as integer microseconds since Unix epoch (JSON-safe). */
 const toChartTime = (t: number): UTCTimestamp => (t / 1e6) as UTCTimestamp
 
-const mapData = (data: any, map: Record<string, string>) => {
-  return data.map((item: any) => {
-    const newItem: Record<string, any> = {}
-    for (const [key, value] of Object.entries(map)) {
-      newItem[key] = item[value]
-    }
-    if (typeof newItem.time === 'number') {
-      newItem.time = toChartTime(newItem.time)
-    }
-    return newItem
-  })
+const mapOne = (item: any, map: Record<string, [string, number]>) => {
+  const newItem: Record<string, any> = {}
+  for (const [key, value] of Object.entries(map)) {
+    newItem[key] = item[value[0]] * value[1]
+  }
+  if (typeof newItem.time === 'number') {
+    newItem.time = toChartTime(newItem.time)
+  }
+  return newItem
+}
+
+const mapData = (data: any, map: Record<string, [string, number]>) => {
+  return data.map((item: any) => mapOne(item, map))
+}
+
+/** Same chart time as `mapOne` with `time: ['time', 1e6]`. */
+const payloadChartTime = (item: any): UTCTimestamp => toChartTime((item.time as number) * 1e6)
+
+/**
+ * First row wins per chart time (matches prior filter+findIndex dedupe), O(n).
+ * Reuse for all series so we do not re-scan or O(n²) dedupe per line.
+ */
+const buildUniqueBacktestRows = (data: any[]) => {
+  const seen = new Set<number>()
+  const indices: number[] = []
+  const times: UTCTimestamp[] = []
+  for (let i = 0; i < data.length; i++) {
+    const t = payloadChartTime(data[i])
+    if (seen.has(t)) continue
+    seen.add(t)
+    indices.push(i)
+    times.push(t)
+  }
+  return { indices, times }
 }
 
 onMounted(() => {
   if (!chartRef.value) return
+  let livePrimed = false
   chart = createChart(chartRef.value, {
     autoSize: true,
     layout: {
@@ -132,38 +158,101 @@ onMounted(() => {
   const onBacktest = (payload: any) => {
     if (!payload || !Object.keys(payload).includes(props.endpoint)) return
     const data = payload[props.endpoint]
+    if (!Array.isArray(data) || data.length === 0) return
+    livePrimed = true
+    const { indices, times } = buildUniqueBacktestRows(data)
+    const m = indices.length
     if (props.seriesType === 'line') {
-      const mapped = mapData(data, { time: 'time', value: 'close' }) as LineData[]
+      const mapped: LineData[] = new Array(m)
+      for (let j = 0; j < m; j++) {
+        const idx = indices[j]!
+        const row = data[idx]
+        mapped[j] = { time: times[j]!, value: row.close }
+      }
       ;(series.value as ISeriesApi<'Line'>).setData(mapped)
     } else {
-      const mapped = mapData(data, {
-        time: 'time',
-        open: 'open',
-        high: 'high',
-        low: 'low',
-        close: 'close',
-      })
+      const mapped: CandlestickData[] = new Array(m)
+      for (let j = 0; j < m; j++) {
+        const idx = indices[j]!
+        const row = data[idx]
+        mapped[j] = {
+          time: times[j]!,
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+        }
+      }
       ;(series.value as ISeriesApi<'Candlestick'>).setData(mapped)
+    }
+    const first = data[0] as Record<string, unknown>
+    for (const key of Object.keys(graphMappings)) {
+      if (!(key in first)) continue
+      const mapped: LineData[] = new Array(m)
+      for (let j = 0; j < m; j++) {
+        const idx = indices[j]!
+        mapped[j] = { time: times[j]!, value: data[idx][key] as number }
+      }
+      if (!extraSeries.value[key]) {
+        extraSeries.value[key] = chart!.addSeries(LineSeries, {
+          color: graphMappings[key as keyof typeof graphMappings].color,
+          lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any
+        }, graphMappings[key as keyof typeof graphMappings].pane)
+      }
+      extraSeries.value[key].setData(mapped)
     }
     chart?.timeScale().fitContent()
   }
 
-  const onTick = (payload: any) => {
-    if (!payload || !Object.keys(payload).includes(props.endpoint)) return
-    const data = payload
-    console.log(data)
+  /** Live: server emits one row per event on `tick` | `10-tick` | `100-tick`. */
+  const onLivePoint = (payload: any) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return
+    if (typeof payload.time !== 'number') return
     if (props.seriesType === 'line') {
-      const mapped = mapData(data, { time: 'time', value: 'close' }) as LineData
-      ;(series.value as ISeriesApi<'Line'>).update(mapped)
-    } else if (props.seriesType === 'candlestick') {
-      const mapped = mapData(data, { time: 'time', open: 'open', high: 'high', low: 'low', close: 'close' }) as CandlestickData
-      ;(series.value as ISeriesApi<'Candlestick'>).update(mapped)
+      const mapped = mapOne(payload, { time: ['time', 1e6], value: ['close', 1] }) as LineData
+      const line = series.value as ISeriesApi<'Line'>
+      if (!livePrimed) {
+        line.setData([mapped])
+        livePrimed = true
+      } else {
+        line.update(mapped)
+      }
+    } else {
+      const mapped = mapOne(payload, {
+        time: ['time', 1e6],
+        open: ['open', 1],
+        high: ['high', 1],
+        low: ['low', 1],
+        close: ['close', 1],
+      }) as CandlestickData
+      const c = series.value as ISeriesApi<'Candlestick'>
+      if (!livePrimed) {
+        c.setData([mapped])
+        livePrimed = true
+      } else {
+        c.update(mapped)
+      }
+    }
+    for (const key of Object.keys(payload)) {
+      if (key in graphMappings) {
+        const mapped = mapOne(payload, { time: ['time', 1e6], value: [key, 1] }) as LineData
+        if (!extraSeries.value[key]) {
+          extraSeries.value[key] = chart!.addSeries(LineSeries, {
+            color: graphMappings[key as keyof typeof graphMappings].color,
+            lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any
+          }, graphMappings[key as keyof typeof graphMappings].pane)
+        }
+        extraSeries.value[key].update(mapped)
+      }
     }
   }
 
   props.socket.on('backtest', onBacktest)
-  props.socket.on(props.endpoint, onTick)
-  detachSocket = () => props.socket.off('backtest', onBacktest)
+  props.socket.on(props.endpoint, onLivePoint)
+  detachSocket = () => {
+    props.socket.off('backtest', onBacktest)
+    props.socket.off(props.endpoint, onLivePoint)
+  }
 })
 
 onUnmounted(() => {

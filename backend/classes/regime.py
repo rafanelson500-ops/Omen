@@ -2,7 +2,27 @@ import math
 from collections import deque
 
 import numpy as np
-from numba import njit
+
+
+def vwap_and_std_from_sums(sum_v, sum_pv, sum_pv2):
+    """
+    Volume-weighted VWAP and std of price around that VWAP, from window totals.
+    sum_pv = Σ(p·v), sum_pv2 = Σ(v·p²), sum_v = Σ(v). Same math as live
+    ``vwap_and_std_around`` over flattened (price, volume) points.
+    """
+    sv = np.asarray(sum_v, dtype=np.float64)
+    spv = np.asarray(sum_pv, dtype=np.float64)
+    spv2 = np.asarray(sum_pv2, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vw = spv / sv
+        mean_p2 = spv2 / sv
+        var = mean_p2 - vw * vw
+    var = np.maximum(var, 0.0)
+    std = np.sqrt(var)
+    bad = sv <= 0
+    vw = np.where(bad, np.nan, vw)
+    std = np.where(bad, np.nan, std)
+    return vw, std
 
 
 def _candles_to_price_volume_arrays(candles):
@@ -16,33 +36,11 @@ def _candles_to_price_volume_arrays(candles):
     return np.asarray(prices, dtype=np.float64), np.asarray(volumes, dtype=np.float64)
 
 
-@njit(cache=True)
-def vwap_and_std_around_from_arrays(prices, volumes):
-    """VWAP and volume-weighted std of price around that VWAP (same window)."""
-    n = prices.shape[0]
-    vwap_total = 0.0
-    pv2_total = 0.0
-    total_volume = 0.0
-    for i in range(n):
-        pi = prices[i]
-        vi = volumes[i]
-        vwap_total += pi * vi
-        pv2_total += vi * pi * pi
-        total_volume += vi
-    if total_volume == 0.0:
-        return np.nan, np.nan
-    vw = vwap_total / total_volume
-    mean_p2 = pv2_total / total_volume
-    var = mean_p2 - vw * vw
-    if var < 0.0:
-        var = 0.0
-    std_around = np.sqrt(var)
-    return vw, std_around
-
-
 def vwap_and_std_around(candles):
     p, v = _candles_to_price_volume_arrays(candles)
-    vw, s = vwap_and_std_around_from_arrays(p, v)
+    if p.size == 0:
+        return float("nan"), float("nan")
+    vw, s = vwap_and_std_from_sums(np.sum(v), np.sum(p * v), np.sum(v * p * p))
     return float(vw), float(s)
 
 
