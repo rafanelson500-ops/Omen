@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { onMounted, onUnmounted, provide, ref, shallowRef } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import Chart from './Chart.vue'
+import { ChartSyncGroup, chartSyncKey } from './chartSync'
+
+const syncCharts = ref(true)
+const chartSync = new ChartSyncGroup(() => syncCharts.value)
+provide(chartSyncKey, chartSync)
 
 let url = 'http://localhost:8000'
 if (window.location.hostname === 'play.nukesmp.com') {
@@ -48,6 +53,19 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="app-header__actions">
+        <label class="sync-switch" :data-on="syncCharts">
+          <span class="sync-switch__label">Sync charts</span>
+          <input
+            v-model="syncCharts"
+            type="checkbox"
+            class="sync-switch__input"
+            role="switch"
+            :aria-checked="syncCharts ? 'true' : 'false'"
+          />
+          <span class="sync-switch__track" aria-hidden="true">
+            <span class="sync-switch__thumb" />
+          </span>
+        </label>
         <span class="status-pill" :data-on="connected">
           <span class="status-pill__dot" />
           {{ connected ? 'Live socket' : 'Disconnected' }}
@@ -168,6 +186,67 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.sync-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.sync-switch__label {
+  letter-spacing: 0.02em;
+}
+
+.sync-switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.sync-switch__track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(51, 65, 85, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.sync-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.sync-switch[data-on="true"] .sync-switch__track {
+  background: rgba(14, 165, 233, 0.35);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.sync-switch[data-on="true"] .sync-switch__thumb {
+  transform: translateX(16px);
+  background: #38bdf8;
+}
+
+.sync-switch:focus-within .sync-switch__track {
+  outline: 2px solid rgba(56, 189, 248, 0.45);
+  outline-offset: 2px;
 }
 
 .status-pill {
@@ -311,6 +390,6 @@ onUnmounted(() => {
 }
 
 .tick-chart {
-  min-height: 80vh;
+  min-height: 50vh;
 }
 </style>

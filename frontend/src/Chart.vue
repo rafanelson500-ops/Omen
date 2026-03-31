@@ -11,10 +11,12 @@ import {
   type ISeriesApi,
   type LineData,
   type CandlestickData,
+  type SeriesType,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, onMounted, onUnmounted, inject } from 'vue'
 import { graphMappings } from './mappings'
+import { chartSyncKey } from './chartSync'
 
 const props = defineProps<{
   socket: Socket
@@ -25,6 +27,7 @@ const props = defineProps<{
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: IChartApi | null = null
 const series = shallowRef<ISeriesApi<'Line'> | ISeriesApi<'Candlestick'> | null>(null)
+const chartSync = inject(chartSyncKey, null)
 const extraSeries = shallowRef<Record<string, ISeriesApi<'Line'>>>({})
 
 let detachSocket: (() => void) | null = null
@@ -253,9 +256,14 @@ onMounted(() => {
     props.socket.off('backtest', onBacktest)
     props.socket.off(props.endpoint, onLivePoint)
   }
+
+  if (chartSync && chart && series.value) {
+    chartSync.register(chart, series.value as ISeriesApi<SeriesType>)
+  }
 })
 
 onUnmounted(() => {
+  if (chart) chartSync?.unregister(chart)
   detachSocket?.()
   detachSocket = null
   series.value = null

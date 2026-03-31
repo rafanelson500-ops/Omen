@@ -41,6 +41,17 @@ export const graphMappings = {
         "pane": 1
     },
 
+    "reprice_short": {
+        "color": "red",
+        "lineWidth": 1,
+        "pane": 2
+    },
+    "reprice_long": {
+        "color": "green",
+        "lineWidth": 1,
+        "pane": 2
+    },
+
     "avg_delta": {
         "color": "white",
         "lineWidth": 1,

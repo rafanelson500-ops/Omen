@@ -21,6 +21,13 @@ def add_tick_features(df):
     df['agg_eff_upper'] = agg_eff_mean + AGGRESSION_EFFICIENCY_K * agg_eff_std
     df['agg_eff_lower'] = agg_eff_mean - AGGRESSION_EFFICIENCY_K * agg_eff_std
     df['agg_eff_spike'] = np.where(df['aggression_efficiency'] > df['agg_eff_upper'], 1, np.where(df['aggression_efficiency'] < df['agg_eff_lower'], -1, 0))
+
+    df['reprice_short'] = np.where(
+        (df['agg_eff_spike'].shift(1) == 1) & (df['agg_eff_spike'] == 0), 1, 0
+    )
+    df['reprice_long'] = np.where(
+        (df['agg_eff_spike'].shift(1) == -1) & (df['agg_eff_spike'] == 0), 1, 0
+    )
     
     return df.fillna(0.1)
 

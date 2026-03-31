@@ -84,11 +84,13 @@ def start_live_stream() -> None:
     def on_medium(row: dict) -> None:
         nonlocal medium_df
         medium_df = pd.concat([medium_df, pd.DataFrame([row])], ignore_index=True)
+        medium_df = microstate_features(medium_df)
         _emit_from_live("10-tick", medium_df.iloc[-1].to_dict())
 
     def on_long(row: dict) -> None:
         nonlocal long_df
         long_df = pd.concat([long_df, pd.DataFrame([row])], ignore_index=True)
+        long_df = add_context_features(long_df)
         _emit_from_live("100-tick", long_df.iloc[-1].to_dict())
 
     stream = Datastream(on_tick, on_medium, on_long)
@@ -103,5 +105,5 @@ def start_live_stream() -> None:
 
 
 if __name__ == "__main__":
-    #start_live_stream()
+    start_live_stream()
     socketio.run(app, host="0.0.0.0", port=8000)

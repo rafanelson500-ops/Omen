@@ -41,6 +41,7 @@ def _side_sign(side: Any) -> int:
 def _agg_bar_from_ticks(ticks: list[tuple[float, int, int, int]]) -> dict[str, Any]:
     """ticks: (price, time_us, size, side_sign) per trade."""
     prices = [t[0] for t in ticks]
+    sizes = [t[2] for t in ticks]
     deltas = [t[2] * t[3] for t in ticks]
     return {
         "time": ticks[0][1],
@@ -48,6 +49,7 @@ def _agg_bar_from_ticks(ticks: list[tuple[float, int, int, int]]) -> dict[str, A
         "high": max(prices),
         "low": min(prices),
         "close": prices[-1],
+        "volume": sum(sizes),
         "delta": sum(deltas),
     }
 
