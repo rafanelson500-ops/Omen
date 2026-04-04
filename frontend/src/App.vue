@@ -17,7 +17,7 @@ const socket = shallowRef<Socket | null>(null)
 const connected = ref(false)
 
 const backtest = () => {
-  const d = "2026-03-27" // prompt("enter date")
+  const d =prompt("enter date")
   socket.value?.emit('backtest', d)
 }
 
@@ -390,6 +390,6 @@ onUnmounted(() => {
 }
 
 .tick-chart {
-  min-height: 50vh;
+  min-height: 70vh;
 }
 </style>

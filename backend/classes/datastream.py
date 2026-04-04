@@ -13,7 +13,7 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "ES.v.0"
+symbol = "NQ.v.0"
 
 
 def _ts_event_to_time_us(ts_event: int, n) -> int:
@@ -32,10 +32,7 @@ def _trade_size(record: Any) -> int:
 
 
 def _side_sign(side: Any) -> int:
-    if isinstance(side, str):
-        u = side.upper()
-        return 1 if u in ("B", "BID", "1") else -1
-    return 1 if int(side) == 1 else -1
+    return 1 if side == "B" else -1
 
 
 def _agg_bar_from_ticks(ticks: list[tuple[float, int, int, int]]) -> dict[str, Any]:
@@ -123,7 +120,7 @@ class Datastream:
                 price = _trade_price(record)
                 ts_us = _ts_event_to_time_us(record.ts_event, 1e9)
                 size = _trade_size(record)
-                sgn = _side_sign(getattr(record, "side", "A"))
+                sgn = _side_sign(record.side)
             except Exception:
                 return
 
@@ -137,18 +134,19 @@ class Datastream:
                 "delta": size * sgn,
             }
 
-            self.emit_tick(tick_row)
 
             tup = (price, ts_us, size, sgn)
+            self._buf100.append(tup)
+            if len(self._buf100) >= 100:
+                self.emit_long_tick(_agg_bar_from_ticks(self._buf100))
+                self._buf100.clear()
+
             self._buf10.append(tup)
             if len(self._buf10) >= 10:
                 self.emit_medium_tick(_agg_bar_from_ticks(self._buf10))
                 self._buf10.clear()
 
-            self._buf100.append(tup)
-            if len(self._buf100) >= 100:
-                self.emit_long_tick(_agg_bar_from_ticks(self._buf100))
-                self._buf100.clear()
+            self.emit_tick(tick_row)
 
         client = db.Live(DATABENTO_API_KEY)
         print("Getting live ticks")
@@ -163,13 +161,37 @@ class Datastream:
 
 
 def aggregate_ticks(df, n):
-    df = df.copy()
-    return df.groupby(df.index // n).agg({
-        "time": "first",
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "delta": "sum",
-        "volume": "sum",
-    })
+    """
+    Non-overlapping n-tick bars on **row order** (ticks 0..n-1, n..2n-1, …).
+
+    Matches ``Datastream.live`` buffer flushes. Trailing ticks that do not fill a
+    full bar are **dropped** (live never emits a partial bar).
+
+    .. note::
+        Historical data used ``df.index // n`` with a 1-based index, so the first
+        bar had only *n−1* ticks and bar boundaries disagreed with live and with
+        ``master`` VWAP (which uses these boundaries).
+    """
+    df = df.copy().reset_index(drop=True)
+    m = (len(df) // n) * n
+    if m == 0:
+        return pd.DataFrame(
+            columns=["time", "open", "high", "low", "close", "delta", "volume"]
+        )
+    sub = df.iloc[:m]
+    gid = np.arange(m, dtype=np.int64) // n
+    return (
+        sub.groupby(gid, sort=True)
+        .agg(
+            {
+                "time": "first",
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "delta": "sum",
+                "volume": "sum",
+            }
+        )
+        .reset_index(drop=True)
+    )

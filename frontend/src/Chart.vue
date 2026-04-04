@@ -32,9 +32,6 @@ const extraSeries = shallowRef<Record<string, ISeriesApi<'Line'>>>({})
 
 let detachSocket: (() => void) | null = null
 
-/** Price scale step: labels and grid align to 0.25 increments. */
-const priceFormatQuarter = { type: 'price' as const, minMove: 0.25, precision: 2 }
-
 /** Backend sends `time` as integer microseconds since Unix epoch (JSON-safe). */
 const toChartTime = (t: number): UTCTimestamp => (t / 1e6) as UTCTimestamp
 
@@ -90,7 +87,7 @@ onMounted(() => {
       horzLines: { color: 'rgba(30, 41, 59, 0.85)', style: LineStyle.Dotted },
     },
     crosshair: {
-      mode: CrosshairMode.Normal,
+      mode: CrosshairMode.Magnet,
       vertLine: {
         color: 'rgba(125, 211, 252, 0.45)',
         width: 1,
@@ -117,7 +114,6 @@ onMounted(() => {
 
   if (props.seriesType === 'line') {
     series.value = chart.addSeries(LineSeries, {
-      priceFormat: priceFormatQuarter,
       color: '#38bdf8',
       lineWidth: 2,
       crosshairMarkerVisible: true,
@@ -132,7 +128,6 @@ onMounted(() => {
     const candleOpts =
       props.endpoint === '100-tick'
         ? {
-            priceFormat: priceFormatQuarter,
             upColor: 'rgba(52, 211, 153, 0.92)',
             downColor: 'rgba(248, 113, 113, 0.92)',
             borderVisible: true,
@@ -143,7 +138,6 @@ onMounted(() => {
             wickDownColor: '#fca5a5',
           }
         : {
-            priceFormat: priceFormatQuarter,
             upColor: 'rgba(56, 189, 248, 0.95)',
             downColor: 'rgba(244, 114, 182, 0.95)',
             borderVisible: true,
@@ -199,7 +193,7 @@ onMounted(() => {
       if (!extraSeries.value[key]) {
         extraSeries.value[key] = chart!.addSeries(LineSeries, {
           color: graphMappings[key as keyof typeof graphMappings].color,
-          lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any
+          lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any,
         }, graphMappings[key as keyof typeof graphMappings].pane)
       }
       extraSeries.value[key].setData(mapped)
@@ -242,7 +236,7 @@ onMounted(() => {
         if (!extraSeries.value[key]) {
           extraSeries.value[key] = chart!.addSeries(LineSeries, {
             color: graphMappings[key as keyof typeof graphMappings].color,
-            lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any
+            lineWidth: graphMappings[key as keyof typeof graphMappings].lineWidth as any,
           }, graphMappings[key as keyof typeof graphMappings].pane)
         }
         extraSeries.value[key].update(mapped)
