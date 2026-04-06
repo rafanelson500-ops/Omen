@@ -7,7 +7,9 @@ def ingest_tick(
     #Variables
     cost_per_entry: float,
     max_ticks_in_trade: int,
-
+    daily_profit_target: float,
+    daily_loss_limit: float,
+    
     #Context
     price: float,
     tps_spike: int,
@@ -18,6 +20,7 @@ def ingest_tick(
     vwap: float,
     vwap_upper: float,
     vwap_lower: float,
+    hmm_state: int,
 
     #State
     ticks_since_stall: int,
@@ -27,6 +30,7 @@ def ingest_tick(
     ticks_since_pos_agg_eff_spike: int,
     ticks_since_neg_agg_eff_spike: int,
     ticks_in_trade: int,
+    prev_hmm_state: int,
 
     #Account State
     position: int,
@@ -48,18 +52,24 @@ def ingest_tick(
         # Trade Management
         unrealizedpnl = position * (price - entry_price)
 
-        if unrealizedpnl > 10: # Take Profit
+        if unrealizedpnl > (vwap_upper - vwap): #                                       EXIT: Take Profit
             position = 0
             entry_price = 0
             realizedpnl += unrealizedpnl - cost_per_entry
             unrealizedpnl = 0
-        elif unrealizedpnl < -5: # Stop Loss
+        elif unrealizedpnl < (vwap_lower - vwap) or realizedpnl + unrealizedpnl < -daily_loss_limit: #          EXIT: Stop Loss
             position = 0
             entry_price = 0
             realizedpnl += unrealizedpnl - cost_per_entry
             unrealizedpnl = 0
 
-        if ticks_in_trade >= max_ticks_in_trade:
+        if hmm_state != prev_hmm_state: #                                         EXIT: Regime Switch
+            position = 0
+            entry_price = 0
+            realizedpnl += unrealizedpnl - cost_per_entry
+            unrealizedpnl = 0
+
+        if ticks_in_trade >= max_ticks_in_trade: #                                     EXIT: Max Trade Duration
             position = 0
             entry_price = 0
             realizedpnl += unrealizedpnl - cost_per_entry
@@ -67,25 +77,29 @@ def ingest_tick(
 
     else:
         # Conditions
-        if ticks_since_over == 0 or ticks_since_under == 0:
-            if ticks_since_stall == 0 and ticks_since_spike <= 5:
-                if ticks_since_pos_agg_eff_spike <= 5:
-                    position = 1
-                    entry_price = price
-                    unrealizedpnl = 0
-                elif ticks_since_neg_agg_eff_spike <= 5:
-                    entry_price = price
-                    position = -1
-                    unrealizedpnl = 0
+        if realizedpnl > -daily_loss_limit and realizedpnl < daily_profit_target:
+            if (ticks_since_over == 0) or (ticks_since_under == 0):
+                if ticks_since_stall == 0 and ticks_since_spike <= 5:
+                    if ticks_since_pos_agg_eff_spike <= 5:
+                        position = -1
+                        entry_price = price
+                        unrealizedpnl = 0
+                    elif ticks_since_neg_agg_eff_spike <= 5:
+                        entry_price = price
+                        position = 1
+                        unrealizedpnl = 0
 
-    return (ticks_since_stall, ticks_since_spike, ticks_since_over, ticks_since_under, ticks_since_pos_agg_eff_spike, ticks_since_neg_agg_eff_spike, ticks_in_trade, position, entry_price, unrealizedpnl, realizedpnl)
+    prev_hmm_state = hmm_state
+    return (ticks_since_stall, ticks_since_spike, ticks_since_over, ticks_since_under, ticks_since_pos_agg_eff_spike, ticks_since_neg_agg_eff_spike, ticks_in_trade, prev_hmm_state, position, entry_price, unrealizedpnl, realizedpnl)
 
 @jit(nopython=True)
 def ingest_ticks(
     #Variables
     cost_per_entry: float,
     max_ticks_in_trade: int,
-
+    daily_profit_target: float,
+    daily_loss_limit: float,
+    
     #Context
     price: np.ndarray,
     tps_spikes: np.ndarray,
@@ -96,6 +110,7 @@ def ingest_ticks(
     vwap: np.ndarray,
     vwap_upper: np.ndarray,
     vwap_lower: np.ndarray,
+    hmm_state: np.ndarray,
 
     #State
     ticks_since_stall: int,
@@ -105,6 +120,7 @@ def ingest_ticks(
     ticks_since_pos_agg_eff_spike: int,
     ticks_since_neg_agg_eff_spike: int,
     ticks_in_trade: int,
+    prev_hmm_state: int,
 
     # Account State
     position: int,
@@ -121,10 +137,12 @@ def ingest_ticks(
 
     for i in range(len(price)):
         # Numba nopython: cannot unpack into position[i] in one statement — use temps.
-        nstall, nspike, nover, nunder, npaggspike, nnegaggspike, nticks_in_trade, npos, nentry_price, nunrealizedpnl, nrealizedpnl = ingest_tick(
+        nstall, nspike, nover, nunder, npaggspike, nnegaggspike, nticks_in_trade, nprev_hmm_state, npos, nentry_price, nunrealizedpnl, nrealizedpnl = ingest_tick(
             cost_per_entry,
             max_ticks_in_trade,
-
+            daily_profit_target,
+            daily_loss_limit,
+            
             price[i],
             tps_spikes[i],
             tps_stalls[i],
@@ -134,6 +152,7 @@ def ingest_ticks(
             vwap[i],
             vwap_upper[i],
             vwap_lower[i],
+            hmm_state[i],
 
             ticks_since_stall,
             ticks_since_spike,
@@ -142,6 +161,7 @@ def ingest_ticks(
             ticks_since_pos_agg_eff_spike,
             ticks_since_neg_agg_eff_spike,
             ticks_in_trade,
+            prev_hmm_state,
 
             position,
             entry_price,
@@ -156,6 +176,7 @@ def ingest_ticks(
         ticks_since_pos_agg_eff_spike = npaggspike
         ticks_since_neg_agg_eff_spike = nnegaggspike
         ticks_in_trade = nticks_in_trade
+        prev_hmm_state = nprev_hmm_state
 
         position = npos
         entry_price = nentry_price
@@ -171,8 +192,10 @@ def ingest_ticks(
 class Strategy:
     def __init__(self):
         # Variables
-        self.cost_per_entry = 2
-        self.max_ticks_in_trade = 1500
+        self.cost_per_entry = 0.5
+        self.max_ticks_in_trade = 10000
+        self.daily_profit_target = 100
+        self.daily_loss_limit = 100
 
         # State
         self.ticks_since_stall = 1000
@@ -182,6 +205,7 @@ class Strategy:
         self.ticks_since_pos_agg_eff_spike = 1000
         self.ticks_since_neg_agg_eff_spike = 1000
         self.ticks_in_trade = 0
+        self.prev_hmm_state = 0
 
         # Account State
         self.position = 0
@@ -189,8 +213,72 @@ class Strategy:
         self.unrealizedpnl = 0
         self.realizedpnl = 0
 
-    def live_tick(self):
-        pass
+    def live_tick(self, row):
+        # iloc[-1] may be a view; copy before assigning strategy fields.
+        row = row.copy()
+        price = row['close']
+        tps_spike = row['tps_spike']
+        tps_stall = row['tps_stall']
+        agg_eff_spike = row['agg_eff_spike']
+        agg_eff = row['aggression_efficiency']
+        raw_delta = row['raw_delta']
+        vwap = row['vwap']
+        vwap_upper = row['vwap_upper']
+        vwap_lower = row['vwap_lower']
+        hmm_state = row['hmm_state']
+
+        nstall, nspike, nover, nunder, npaggspike, nnegaggspike, nticks_in_trade, nprev_hmm_state, npos, nentry_price, nunrealizedpnl, nrealizedpnl =ingest_tick(
+            self.cost_per_entry,
+            self.max_ticks_in_trade,
+            self.daily_profit_target,
+            self.daily_loss_limit,
+            price,
+            tps_spike,
+            tps_stall,
+            agg_eff_spike,
+            agg_eff,
+            raw_delta,
+            vwap,
+            vwap_upper,
+            vwap_lower,
+            hmm_state,
+            self.ticks_since_stall,
+            self.ticks_since_spike,
+            self.ticks_since_over,
+            self.ticks_since_under,
+            self.ticks_since_pos_agg_eff_spike,
+            self.ticks_since_neg_agg_eff_spike,
+            self.ticks_in_trade,
+            self.prev_hmm_state,
+            self.position,
+            self.entry_price,
+            self.unrealizedpnl,
+            self.realizedpnl,
+        )
+
+        self.ticks_since_stall = nstall
+        self.ticks_since_spike = nspike
+        self.ticks_since_over = nover
+        self.ticks_since_under = nunder
+        self.ticks_since_pos_agg_eff_spike = npaggspike
+        self.ticks_since_neg_agg_eff_spike = nnegaggspike
+        self.ticks_in_trade = nticks_in_trade
+        self.prev_hmm_state = nprev_hmm_state
+
+        if npos != self.position:
+            print(f"Position changed from {self.position} to {npos}")
+
+        self.position = npos
+        self.entry_price = nentry_price
+        self.unrealizedpnl = nunrealizedpnl
+        self.realizedpnl = nrealizedpnl
+
+        row['position'] = self.position
+        row['entry_price'] = self.entry_price
+        row['unrealizedpnl'] = self.unrealizedpnl
+        row['realizedpnl'] = self.realizedpnl
+
+        return row
 
     def backtest(self, master_df):
         # Context
@@ -203,7 +291,7 @@ class Strategy:
         vwap = master_df['vwap'].values
         vwap_upper = (master_df['vwap'] + 2 * master_df['vwap_std']).values
         vwap_lower = (master_df['vwap'] - 2 * master_df['vwap_std']).values
-
+        hmm_state = master_df['hmm_state'].values
 
         # State
         ticks_since_stall = self.ticks_since_stall
@@ -213,7 +301,8 @@ class Strategy:
         ticks_since_pos_agg_eff_spike = self.ticks_since_pos_agg_eff_spike
         ticks_since_neg_agg_eff_spike = self.ticks_since_neg_agg_eff_spike
         ticks_in_trade = self.ticks_in_trade
-        
+        prev_hmm_state = self.prev_hmm_state
+
         # Scalar account state for ingest_tick / Numba (not per-row arrays).
         position = int(self.position)
         entry_price = float(self.entry_price)
@@ -221,9 +310,12 @@ class Strategy:
         realizedpnl = float(self.realizedpnl)
 
         # Ingest Ticks
+        print("Ingesting ticks")
         positions, entry_prices, unrealizedpnls, realizedpnls = ingest_ticks(
             self.cost_per_entry,
             self.max_ticks_in_trade,
+            self.daily_profit_target,
+            self.daily_loss_limit,
 
             prices,
             tps_spikes,
@@ -234,6 +326,7 @@ class Strategy:
             vwap,
             vwap_upper,
             vwap_lower,
+            hmm_state,
 
             ticks_since_stall,
             ticks_since_spike,
@@ -242,12 +335,15 @@ class Strategy:
             ticks_since_pos_agg_eff_spike,
             ticks_since_neg_agg_eff_spike,
             ticks_in_trade,
-            
+            prev_hmm_state,
+
             position,
             entry_price,
             unrealizedpnl,
             realizedpnl,
         )
+
+        print("Ingesting ticks complete")
 
         master_df['position'] = positions
         master_df['entry_price'] = entry_prices

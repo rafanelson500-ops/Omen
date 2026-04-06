@@ -13,7 +13,7 @@ dotenv.load_dotenv()
 
 DATABENTO_API_KEY = os.getenv("DATABENTO_API_KEY")
 dataset = "GLBX.MDP3"
-symbol = "NQ.v.0"
+symbol = "ES.v.0"
 
 
 def _ts_event_to_time_us(ts_event: int, n) -> int:
@@ -81,6 +81,7 @@ class Datastream:
             end=end_date,
             schema="trades",
         )
+        print("Data fetched")
         short_df = ticks.to_df()[["ts_event", "size", "price", "side"]].dropna()
         short_df.index = np.arange(1, len(short_df) + 1)
         short_df["side"] = np.where(short_df["side"] == "B", 1, -1)
@@ -103,6 +104,8 @@ class Datastream:
         self.short_df = short_df
         self.medium_df = medium_df
         self.long_df = long_df
+
+        print("Data aggregated")
 
         return short_df, medium_df, long_df
 

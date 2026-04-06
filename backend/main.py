@@ -34,6 +34,7 @@ def _live_master_row_slice(
         and len(long_df) >= LIVE_LONG_WARMUP
         and "vwap" in long_df.columns
         and "vwap_std" in long_df.columns
+        and "hmm_state" in long_df.columns
     ):
         return None
     row_df = short_df.iloc[-1:].copy()
@@ -41,8 +42,14 @@ def _live_master_row_slice(
     last_l = long_df.iloc[-1]
     row_df["raw_delta"] = last_m["raw_delta"]
     row_df["avg_delta"] = last_m["avg_delta"]
-    row_df["vwap"] = last_l["vwap"]
-    row_df["vwap_std"] = last_l["vwap_std"]
+    vw = float(last_l["vwap"])
+    vst = float(last_l["vwap_std"])
+    row_df["vwap"] = vw
+    row_df["vwap_std"] = vst
+    # Same as Strategy.backtest(): ingest_tick expects these keys on the live row.
+    row_df["vwap_upper"] = vw + 2.0 * vst
+    row_df["vwap_lower"] = vw - 2.0 * vst
+    row_df["hmm_state"] = last_l["hmm_state"]
     return row_df
 
 
@@ -87,7 +94,7 @@ def build_master_df_live_replay(raw_short: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     if not (
         {"raw_delta", "avg_delta"}.issubset(medium_feat.columns)
-        and {"vwap", "vwap_std"}.issubset(long_feat.columns)
+        and {"vwap", "vwap_std", "hmm_state"}.issubset(long_feat.columns)
     ):
         return pd.DataFrame()
 
@@ -99,10 +106,14 @@ def build_master_df_live_replay(raw_short: pd.DataFrame) -> pd.DataFrame:
     mavg = medium_feat["avg_delta"].to_numpy()
     lvw = long_feat["vwap"].to_numpy()
     lvs = long_feat["vwap_std"].to_numpy()
+    lhmm = long_feat["hmm_state"].to_numpy()
     out["raw_delta"] = mraw[med_ix[need]]
     out["avg_delta"] = mavg[med_ix[need]]
     out["vwap"] = lvw[long_ix[need]]
     out["vwap_std"] = lvs[long_ix[need]]
+    out["vwap_upper"] = out["vwap"] + 2.0 * out["vwap_std"]
+    out["vwap_lower"] = out["vwap"] - 2.0 * out["vwap_std"]
+    out["hmm_state"] = lhmm[long_ix[need]]
     return out.reset_index(drop=True)
 
 
@@ -136,7 +147,7 @@ def handle_disconnect():
 @socketio.on("backtest")
 def handle_backtest(date):
     print(f"Backtesting on {date}")
-    backtest(date + "T14:25:00.000000000Z", date + "T15:00:00.000000000Z")
+    backtest(date + "T13:20:00.000000000Z", date + "T14:00:00.000000000Z")
 
 
 def backtest(start_date, end_date):
@@ -150,10 +161,10 @@ def backtest(start_date, end_date):
     medium_df = microstate_features(medium_df)
     long_df = add_context_features(long_df)
 
-    short_df = _filter_rth_utc(short_df, "14:30:00", "15:00:00")
-    medium_df = _filter_rth_utc(medium_df, "14:30:00", "15:00:00")
-    long_df = _filter_rth_utc(long_df, "14:30:00", "15:00:00")
-    master_df = _filter_rth_utc(master_df, "14:30:00", "15:00:00")
+    short_df = _filter_rth_utc(short_df, "13:30:00", "15:30:00")
+    medium_df = _filter_rth_utc(medium_df, "13:30:00", "15:30:00")
+    long_df = _filter_rth_utc(long_df, "13:30:00", "15:30:00")
+    master_df = _filter_rth_utc(master_df, "13:30:00", "15:30:00")
 
     short_df.dropna(inplace=True)
     medium_df.dropna(inplace=True)
@@ -163,10 +174,12 @@ def backtest(start_date, end_date):
     master_df = strategy.backtest(master_df)
     # Index labels differ (short keeps historical index; master is reset 0..n). Align on time.
     short_df = short_df.merge(
-        master_df[["time", "position", "realizedpnl"]],
+        master_df[["time", "position", "unrealizedpnl", "realizedpnl"]],
         on="time",
         how="left",
     )
+
+    short_df["totalpnl"] = short_df["unrealizedpnl"] + short_df["realizedpnl"]
 
     socketio.emit(
         "backtest",
@@ -185,7 +198,8 @@ def start_live_stream() -> None:
     short_df = pd.DataFrame()
     medium_df = pd.DataFrame()
     long_df = pd.DataFrame()
-
+    strategy = Strategy()
+    
     def on_tick(row: dict) -> None:
         nonlocal short_df, master_df
         short_df = pd.concat([short_df, pd.DataFrame([row])], ignore_index=True)
@@ -193,10 +207,22 @@ def start_live_stream() -> None:
         piece = _live_master_row_slice(short_df, medium_df, long_df)
         if piece is not None:
             master_df = pd.concat([master_df, piece], ignore_index=True)
+            strategy.live_tick(master_df.iloc[-1])
+
         if len(short_df) < LIVE_TICK_WARMUP:
             print(f"Warming up {len(short_df)}/{LIVE_TICK_WARMUP}")
             return
-        _emit_from_live("tick", short_df.iloc[-1].to_dict())
+
+        # Full tick row; strategy fields from last ``live_tick`` (runs only when ``piece``
+        # is not None). Attach on every emit once master exists so the stream isn’t missing
+        # totalpnl on trades that don’t start a new master row (those ticks reuse last state).
+        payload = short_df.iloc[-1].to_dict()
+        if len(master_df) > 0:
+            payload["position"] = strategy.position
+            payload["unrealizedpnl"] = strategy.unrealizedpnl
+            payload["realizedpnl"] = strategy.realizedpnl
+            payload["totalpnl"] = float(strategy.unrealizedpnl) + float(strategy.realizedpnl)
+        _emit_from_live("tick", payload)
 
     def on_medium(row: dict) -> None:
         nonlocal medium_df

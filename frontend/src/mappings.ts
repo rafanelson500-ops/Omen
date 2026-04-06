@@ -25,16 +25,10 @@ export const graphMappings = {
         "pane": 0
     },
 
-    "position": {
-        "color": "white",
-        "lineWidth": 1,
-        "pane": 1
-    },
-
-    "realizedpnl": {
+    "totalpnl": {
         "color": "cyan",
         "lineWidth": 1,
-        "pane": 2
+        "pane": 1
     },
 
     "avg_delta": {
@@ -47,4 +41,10 @@ export const graphMappings = {
         "lineWidth": 1,
         "pane": 1
     },
+
+    "hmm_state": {
+        "color": "red",
+        "lineWidth": 1,
+        "pane": 1
+    }
 }

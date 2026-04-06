@@ -390,6 +390,6 @@ onUnmounted(() => {
 }
 
 .tick-chart {
-  min-height: 70vh;
+  min-height: 50vh;
 }
 </style>
