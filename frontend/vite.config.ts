@@ -18,8 +18,5 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 25565,
-    allowedHosts: [
-      'play.nukesmp.com',
-    ],
   },
 })
