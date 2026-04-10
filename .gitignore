@@ -28,6 +28,8 @@ backend/venv/
 backend/env/
 .venv
 
+.data/
+
 # Environment variables
 .env
 .env.local
