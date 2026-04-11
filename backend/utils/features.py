@@ -56,4 +56,16 @@ def es_features(df):
 
 def cl_features(df):
     df["cl_returns"] = np.where(df['ts_event'] - df['ts_event'].shift(1) == pd.Timedelta(minutes=5), np.log(df["cl_close"]).diff(), 0)
+
+    # HMM Features
+    df["cl_rvol"] = df["cl_returns"].rolling(18).std()
+    df["cl_efficiency"] = (
+        df["cl_close"].diff(12).abs()
+        / df["cl_returns"].abs().rolling(18).sum()
+    )
+    df["cl_vol_ratio"] = (
+        df["cl_returns"].rolling(12).std()
+        / df["cl_returns"].rolling(28).std()
+    )
+    df["cl_rel_volume"] = df["cl_volume"] / df["cl_volume"].rolling(28).mean()
     return df
