@@ -1,11 +1,15 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import { useBackend } from './useBackend'
+
+const { socket, subscribe } = useBackend("http://192.168.1.149:8000")
+
+subscribe("chart", (data) => {
+  console.log(data)
+})
+</script>
 
 <template>
-  <h1>You did it!</h1>
-  <p>
-    Visit <a href="https://vuejs.org/" target="_blank" rel="noopener">vuejs.org</a> to read the
-    documentation
-  </p>
+  <h1>KBit Live Trading</h1>
 </template>
 
 <style scoped></style>

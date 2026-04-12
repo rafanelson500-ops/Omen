@@ -53,7 +53,6 @@ def es_features(df):
     df["es_rel_volume"] = df["es_volume"] / df["es_volume"].rolling(24).mean()
 
     return df
-
 def cl_features(df):
     df["cl_returns"] = np.where(df['ts_event'] - df['ts_event'].shift(1) == pd.Timedelta(minutes=5), np.log(df["cl_close"]).diff(), 0)
 

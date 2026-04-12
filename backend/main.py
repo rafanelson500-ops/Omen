@@ -1,13 +1,23 @@
-import pandas as pd
 import flask
 import flask_socketio as socketio
-import utils.data as data
+from data import Datastream
 
-df = data.get_data()
-print(df.head(50))
+app = flask.Flask(__name__)
+socketio = socketio.SocketIO(app, cors_allowed_origins="*")
 
-# app = flask.Flask(__name__)
-# socketio = socketio.SocketIO(app)
+def handle_data(last_id, bids, asks, best_bid, best_ask, spread, ts):
+    socketio.emit("chart", {
+        "last_id": last_id,
+        "bids": bids,
+        "asks": asks,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "spread": spread,
+        "timestamp": ts
+    })
 
-# if __name__ == "__main__":
-#     socketio.run(app, host="0.0.0.0", port=8000)
+if __name__ == "__main__":
+    datastream = Datastream(handle_data)
+    datastream.start()
+
+    socketio.run(app, host="0.0.0.0", port=8000, debug=True)
