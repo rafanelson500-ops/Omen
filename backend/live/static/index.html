@@ -264,6 +264,23 @@
         </div>
       </div>
       <div id="log" class="log-surface"></div>
+      <div class="log-pager">
+        <button id="log-first" class="pager-btn" title="oldest">&laquo;</button>
+        <button id="log-prev"  class="pager-btn" title="older">&lsaquo;</button>
+        <span id="log-page-info" class="mono pager-info">0 / 0</span>
+        <button id="log-next"  class="pager-btn" title="newer">&rsaquo;</button>
+        <button id="log-last"  class="pager-btn" title="newest">&raquo;</button>
+        <span class="pager-sep"></span>
+        <label class="chk pager-size">
+          <span>per page</span>
+          <select id="log-pagesize" class="select">
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
+      </div>
     </div>
 
     <div class="card card-orders">

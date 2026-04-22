@@ -15,14 +15,18 @@ def summarize(trades: pd.DataFrame, equity: pd.Series) -> dict:
     losses = net[net <= 0]
     n = len(net)
 
-    # Session-level sharpe (daily)
-    daily = equity.resample("1D").last().diff().dropna()
-    daily = daily[daily != 0]
-    sharpe = (daily.mean() / daily.std(ddof=0) * np.sqrt(252)) if len(daily) > 1 and daily.std() > 0 else 0.0
+    # Daily Sharpe. Build the per-session PnL series by taking the LAST equity
+    # value on each RTH trading day and diffing. We must NOT drop zero-PnL
+    # days -- a day with no trades contributes 0 to the numerator and also
+    # shrinks volatility in the denominator, which is the statistically
+    # correct behavior. The previous implementation filtered `daily != 0`,
+    # which systematically inflated Sharpe by only scoring "active" days.
+    daily = equity.resample("1D").last().ffill().diff().dropna()
+    sharpe = (daily.mean() / daily.std(ddof=0) * np.sqrt(252)) \
+        if len(daily) > 1 and daily.std(ddof=0) > 0 else 0.0
 
     dd = _max_drawdown(equity)
     total = float(net.sum())
-    ndays = max(1, (equity.index[-1].date() - equity.index[0].date()).days)
     ann_ret = total * (252 / max(1, _trading_days(equity)))
 
     return {

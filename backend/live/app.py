@@ -55,10 +55,17 @@ def build_app(runner=None) -> FastAPI:
         await sock.accept()
         q = await BUS.subscribe(queue_size=4096)
         try:
-            # send the last ~300 events to hydrate the UI
-            hist = BUS.history_snapshot()[-300:]
-            for ev in hist:
-                await sock.send_json(ev)
+            # Ship the entire history ring as a single batch frame so the client
+            # can process + render once instead of re-rendering the log DOM for
+            # every individual event. With a full 2000-event backlog the old
+            # per-event path was triggering thousands of innerHTML rebuilds.
+            hist = BUS.history_snapshot()
+            if hist:
+                await sock.send_json({
+                    "ch": "__hydrate__",
+                    "t": hist[-1]["t"],
+                    "events": hist,
+                })
             while True:
                 ev = await q.get()
                 await sock.send_text(ev.to_json())

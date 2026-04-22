@@ -73,28 +73,38 @@ async def main() -> None:
     runner = StrategyRunner(s, tv, contract)
 
     # --- Background streams (supervised, auto-restart)
-    gex_hub = GEXbotHub(api_key=s.gexbot_api_key, hub="orderflow",
-                        ticker="ES_SPX")
-    dbn = DatabentoOHLCV(api_key=s.databento_api_key)
+    # The strategy runner is ALWAYS on; GEXbot WS + Databento Live are
+    # optional tile feeds gated by env flags. The strategy itself reads
+    # from the on-disk cache populated by scripts/data_daemon.py, so it
+    # works correctly even when both are disabled.
+    gex_hub: GEXbotHub | None = None
+    dbn = DatabentoOHLCV(api_key=s.databento_api_key) if s.databento_enabled else None
 
     async def _gex_flow():
-        # A fresh GEXbotHub is needed after each disconnect (Azure SDK one-shot).
         nonlocal gex_hub
+        # A fresh GEXbotHub is needed after each disconnect (Azure SDK one-shot).
         gex_hub = GEXbotHub(api_key=s.gexbot_api_key, hub="orderflow",
                             ticker="ES_SPX")
         await gex_hub.run()
 
     async def _dbn_flow():
+        assert dbn is not None
         await dbn.run()
 
     async def _strat_flow():
         await runner.run()
 
-    tasks = [
-        asyncio.create_task(supervised("gexbot", _gex_flow)),
-        asyncio.create_task(supervised("databento_live", _dbn_flow)),
-        asyncio.create_task(supervised("strategy", _strat_flow)),
-    ]
+    tasks: list[asyncio.Task] = [asyncio.create_task(supervised("strategy", _strat_flow))]
+    if s.gexbot_ws_enabled:
+        log.info("gexbot_ws ENABLED (LIVE_GEXBOT_WS_ENABLED=1)")
+        tasks.append(asyncio.create_task(supervised("gexbot", _gex_flow)))
+    else:
+        log.info("gexbot_ws disabled; strategy uses REST-fed cache via data_daemon.py")
+    if s.databento_enabled:
+        log.info("databento_live ENABLED (LIVE_DATABENTO_ENABLED=1)")
+        tasks.append(asyncio.create_task(supervised("databento_live", _dbn_flow)))
+    else:
+        log.info("databento_live disabled; strategy uses daemon-fed cache")
 
     # --- FastAPI server
     app = build_app(runner=runner)
@@ -126,8 +136,10 @@ async def main() -> None:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await gex_hub.close()
-        await dbn.close()
+        if gex_hub is not None:
+            await gex_hub.close()
+        if dbn is not None:
+            await dbn.close()
         await tv.close()
         await server_task
 

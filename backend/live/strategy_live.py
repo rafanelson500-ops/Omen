@@ -1,16 +1,30 @@
 """Live strategy runner.
 
-Consumes price + flow events from the bus, rebuilds rolling bars at the chosen
-frequency, computes the same features as the backtester, fires flow_burst
-signals, and submits bracket orders through Tradovate.
+Architecture
+------------
+The runner is now **cache-driven**: every 5 seconds it rebuilds the feature
+frame from disk (``data/gex/*.parquet`` for orderflow, ``data/market_live/*.parquet``
+for ES 1s OHLCV) and fires a ``FlowBurstStrategy`` decision on the most recent
+*closed* bar. The disk cache is kept warm by ``scripts/data_daemon.py`` which
+runs independently in a screen session -- this guarantees there is no warmup
+period on a cold start because the cache already contains 3-5 days of history.
 
-State machine per trade:
+Why not feed the runner directly from the live WebSockets?
+* The GEXbot orderflow WS uses a proto schema we don't have (see
+  ``live/gexbot_ws.py`` -- the decoded numbers are currently garbage, e.g.
+  spot=715141 vs the correct 5910.xx). The REST endpoint (used by the daemon)
+  is unambiguous JSON and produces identical fields to the backtester.
+* Using the same data layer as the backtester means backtest <-> live
+  alignment is exact: same resample, same features.build_features, same
+  strategy. No silent divergence.
+
+State machine per trade
+-----------------------
     FLAT -> SIGNAL -> SUBMITTED -> FILLED -> (STOP|TARGET|TIME|SESSION) -> FLAT
 
-For simplicity, once a bracket OSO is accepted, the runner considers itself
-'in position' until either:
+Once a bracket OSO is accepted the runner considers itself in-position until:
   * a server-side stop/target fill message is observed, OR
-  * local time-stop (`time_stop_min`) elapses -> send flatten, OR
+  * local time-stop (``time_stop_min``) elapses -> send flatten, OR
   * RTH session close approaches (15:55 ET) -> send flatten.
 """
 from __future__ import annotations
@@ -18,29 +32,27 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, time as dtime, timezone
-from typing import Any
+from dataclasses import dataclass
+from datetime import time as dtime
 
 import pandas as pd
 
-from cheese import features, strategy
-from cheese.config import round_to_tick
-from live.bus import BUS, Event
+from cheese import features, gex as gex_mod, strategy
+from cheese.config import ET, round_to_tick
+from live import cache
+from live.bus import BUS
 from live.logger import get
 from live.settings import LiveSettings
 from live.tradovate import TradovateClient
 
 log = get("strategy_live")
 
-ET_OFFSET_HOURS = -4  # approx; strategy uses 'America/New_York' timezone-aware stamps
-
-# How many seconds to keep in each rolling buffer (we need enough for ATR(14)
-# + flow z-score window, at the bar frequency).
-BUFFER_SECONDS = {
-    "1min": 60 * 60 * 3,   # 3h of 1s data -> 180 bars after resample
-    "5min": 60 * 60 * 12,  # 12h -> 144 bars
+# How far back to pull from the cache on every tick. Need enough bars at the
+# chosen bar_freq for the ATR(14) and flow z-score(60) windows to be fully
+# warmed. Generous by design -- reads are cheap (parquet + tz-convert).
+LOOKBACK = {
+    "1min": pd.Timedelta(hours=12),
+    "5min": pd.Timedelta(hours=72),
 }
 
 
@@ -61,8 +73,6 @@ class StrategyRunner:
         self.s = settings
         self.tv = tradovate
         self.contract = contract
-        self._es_1s: deque[dict] = deque(maxlen=BUFFER_SECONDS.get(settings.bar_freq, 3600))
-        self._gex_1s: deque[dict] = deque(maxlen=BUFFER_SECONDS.get(settings.bar_freq, 3600))
         self._position = PositionState()
         self._armed: bool = not settings.dry_run   # mirrored to dashboard toggle
         self._last_signal_time: float = 0.0
@@ -79,106 +89,103 @@ class StrategyRunner:
         BUS.publish_nowait("status", {"component": "strategy", "ok": True, "armed": flag,
                                       "dry_run": self.s.dry_run})
 
-    # ---------- bus consumer --------------------------------------------
+    # ---------- run loop --------------------------------------------------
     async def run(self) -> None:
-        q = await BUS.subscribe(queue_size=4096)
-        tick_task = asyncio.create_task(self._tick_loop())
+        """Strategy loop. Bus events are no longer consumed directly -- the
+        runner pulls from the on-disk cache populated by ``data_daemon.py``.
+        We still start alongside the rest of the live app so we can react to
+        the ARM toggle and submit bracket orders through Tradovate.
+        """
+        log.info(
+            f"strategy runner starting (cache-driven); bar_freq={self.s.bar_freq} "
+            f"z={self.s.z_threshold} stop_atr={self.s.stop_atr_mult} "
+            f"tgt_atr={self.s.target_atr_mult} time_stop={self.s.time_stop_min}m"
+        )
+        await BUS.publish("status", {"component": "strategy", "ok": True,
+                                     "armed": self._armed, "dry_run": self.s.dry_run})
         try:
             while True:
-                ev: Event = await q.get()
-                if ev.ch == "price" and ev.data.get("src") == "databento":
-                    self._on_price(ev.data)
-                elif ev.ch == "flow" and ev.data.get("src") == "gexbot":
-                    self._on_flow(ev.data)
-        except asyncio.CancelledError:
-            tick_task.cancel()
-            raise
-
-    def _on_price(self, d: dict) -> None:
-        # Normalize ES timestamps to ET so GEX (ET) and ES (UTC from Databento) align
-        ts = pd.Timestamp(d["ts"])
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        ts = ts.tz_convert("America/New_York")
-        self._es_1s.append({
-            "ts": ts,
-            "open": d["open"], "high": d["high"], "low": d["low"],
-            "close": d["close"], "volume": d["volume"],
-        })
-
-    def _on_flow(self, d: dict) -> None:
-        # payload shape is whatever gexbot_ws parsed. We try to extract the flat dict.
-        payload = d.get("payload") or d.get("args")
-        if isinstance(payload, list) and payload:
-            payload = payload[0] if isinstance(payload[0], dict) else None
-        if not isinstance(payload, dict):
-            return
-        if "timestamp" not in payload:
-            return
-        row = dict(payload)
-        try:
-            ts = pd.to_datetime(row["timestamp"], unit="s", utc=True).tz_convert("America/New_York")
-        except Exception:  # noqa: BLE001
-            return
-        row["ts"] = ts
-        self._gex_1s.append(row)
-
-    # ---------- periodic tick --------------------------------------------
-    async def _tick_loop(self) -> None:
-        """Every 5s: build bars, compute features, decide. Also poll exits."""
-        while True:
-            try:
                 await asyncio.sleep(5.0)
-                await self._tick()
-            except asyncio.CancelledError:
-                return
-            except Exception as e:  # noqa: BLE001
-                log.error(f"tick error: {e!r}")
-
-    async def _tick(self) -> None:
-        now = pd.Timestamp.now(tz="America/New_York")
-
-        # --- Build bars from rolling 1s buffers
-        if len(self._es_1s) < 120:  # need at least ~2min of data
+                try:
+                    await self._tick()
+                except Exception as e:  # noqa: BLE001
+                    log.error(f"tick error: {e!r}")
+        except asyncio.CancelledError:
             return
 
-        mkt = pd.DataFrame(list(self._es_1s)).set_index("ts").sort_index()
+    # ---------- tick ------------------------------------------------------
+    async def _tick(self) -> None:
+        now = pd.Timestamp.now(tz=ET)
+        lookback = LOOKBACK.get(self.s.bar_freq, pd.Timedelta(hours=24))
+        since = now - lookback
+
+        # --- ES 1s bars from the daemon-written cache ------------------
+        mkt_1s = cache.load_market_live(since=since)
+        if mkt_1s.empty:
+            log.warning(
+                "no ES 1s data in cache; is data_daemon.py running? "
+                "see scripts/data_daemon.py"
+            )
+            return
+        lag_s = (now - mkt_1s.index.max()).total_seconds()
+        if lag_s > 300:  # >5 min stale
+            log.warning(f"ES cache is stale by {lag_s:.0f}s; daemon may be down")
+
+        # Resample to strategy freq (right-closed, right-labelled -- matches
+        # cheese.market.load so backtest <-> live are aligned).
         mkt = (
-            mkt.resample(self.s.bar_freq, label="right", closed="right")
-               .agg({"open": "first", "high": "max", "low": "min",
-                     "close": "last", "volume": "sum"})
-               .dropna(subset=["close"])
+            mkt_1s.resample(self.s.bar_freq, label="right", closed="right")
+                  .agg({"open": "first", "high": "max", "low": "min",
+                        "close": "last", "volume": "sum"})
+                  .dropna(subset=["close"])
         )
+        # CRITICAL: drop the partial/unclosed last bar. Pandas resample with
+        # label="right" emits a bar whose label is in the future relative to
+        # the 1s data timestamp, so the last bar's H/L/C are incomplete.
+        # Including it would cause the live strategy to fire on different z
+        # values than the backtester (which sees only closed bars).
+        mkt = mkt[mkt.index <= now]
         if len(mkt) < 20:
             return
 
-        gex_df = pd.DataFrame()
-        if self._gex_1s:
-            gex_df = pd.DataFrame(list(self._gex_1s)).set_index("ts").sort_index()
-            # keep only known numeric columns
-            num = gex_df.select_dtypes(include="number")
-            from cheese.gex import resample as gex_resample
-            gex_df = gex_resample(num, freq=self.s.bar_freq)
-
-        feat = features.build_features(mkt, gex_df)
-        last = feat.iloc[-1] if not feat.empty else None
-        if last is None:
+        # --- GEX bars from the REST per-day cache ---------------------
+        # Pull the last few sessions so the flow-z rolling window is fully
+        # warm regardless of when the runner started.
+        days = gex_mod.last_n_sessions(5)
+        gex_raw = gex_mod.load_range(days)
+        if not gex_raw.empty:
+            gex_raw = gex_raw[gex_raw.index >= since]
+        if gex_raw.empty:
+            log.warning("no GEX data in cache for the last 5 sessions; is the daemon running?")
             return
+        # Numeric-only + same resampler the backtester uses.
+        gex_bars = gex_mod.resample(
+            gex_raw.select_dtypes(include="number"), freq=self.s.bar_freq,
+        )
+        gex_bars = gex_bars[gex_bars.index <= now]
 
-        # Publish a compact "now" snapshot to dashboard
+        # --- Features + last closed bar --------------------------------
+        feat = features.build_features(mkt, gex_bars)
+        if feat.empty:
+            return
+        last = feat.iloc[-1]
+
+        # Publish a compact "now" snapshot for the dashboard
         BUS.publish_nowait("signal", {
             "ts": last.name.isoformat(),
             "close": float(last.get("close", math.nan)),
-            "spot": float(last.get("spot", math.nan)) if "spot" in last else None,
-            "gexoflow_z": float(last.get("gexoflow_z", math.nan)) if "gexoflow_z" in last else None,
-            "dexoflow_z": float(last.get("dexoflow_z", math.nan)) if "dexoflow_z" in last else None,
+            "spot": float(last.get("spot", math.nan)) if "spot" in feat.columns else None,
+            "gexoflow_z": (float(last.get("gexoflow_z", math.nan))
+                           if "gexoflow_z" in feat.columns else None),
+            "dexoflow_z": (float(last.get("dexoflow_z", math.nan))
+                           if "dexoflow_z" in feat.columns else None),
             "atr": float(last.get("atr", math.nan)),
             "regime": str(last.get("gamma_regime", "?")),
             "position_side": self._position.side,
             "armed": self._armed,
         })
 
-        # --- Position management: time-stop + session close
+        # --- Position management: time-stop + session close ----------
         if self._position.side != 0 and self._position.submitted:
             held_min = (time.time() - self._position.entry_time) / 60.0
             if held_min >= self.s.time_stop_min:
@@ -190,7 +197,7 @@ class StrategyRunner:
                 await self._flatten("session_close")
                 return
 
-        # --- Entry decision from the most recent closed bar
+        # --- Entry decision from the most recent CLOSED bar ----------
         if self._position.side != 0:
             return
         if not _rth_open_for_entries(now):

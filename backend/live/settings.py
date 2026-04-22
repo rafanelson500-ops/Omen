@@ -28,6 +28,16 @@ Optional tuning:
     LIVE_TIME_STOP_MIN       - default 25
     LIVE_HOST                - "127.0.0.1"
     LIVE_PORT                - 8765
+
+Data source flags (used in conjunction with scripts/data_daemon.py):
+    LIVE_GEXBOT_WS_ENABLED   - "0" (default). The WS protobuf schema is
+                                best-guess without the .proto file and currently
+                                decodes to garbage (spot=715141 etc.). Keep OFF
+                                until the schema is verified; the strategy uses
+                                REST data via the daemon regardless.
+    LIVE_DATABENTO_ENABLED   - "1" (default). ES 1s live WS for real-time tile
+                                updates. Set "0" if the daemon is the only
+                                Databento subscriber (avoids double billing).
 """
 from __future__ import annotations
 
@@ -68,6 +78,9 @@ class LiveSettings:
     port: int = 8765
     databento_api_key: str = ""
     gexbot_api_key: str = ""
+    # Data-source toggles (see module docstring)
+    gexbot_ws_enabled: bool = False
+    databento_enabled: bool = True
     tradovate: TradovateCreds = field(default_factory=lambda: TradovateCreds("", "", "", "1.0", 0, "", socket.gethostname(), None))
 
     # Computed Tradovate endpoints
@@ -140,5 +153,7 @@ def load() -> LiveSettings:
         port=_int(os.getenv("LIVE_PORT"), 8765),
         databento_api_key=os.getenv("DATABENTO_API_KEY", ""),
         gexbot_api_key=os.getenv("GEXBOT_API_KEY", ""),
+        gexbot_ws_enabled=_bool(os.getenv("LIVE_GEXBOT_WS_ENABLED"), False),
+        databento_enabled=_bool(os.getenv("LIVE_DATABENTO_ENABLED"), True),
         tradovate=tc,
     )

@@ -23,6 +23,10 @@
   const LOG_MAX    = 6000;
   const PNL_RING   = 400;
 
+  // Log pagination: page 0 = latest page, page 1 = one page older, etc.
+  const PAGE_SIZES = [100, 200, 500, 1000];
+  const DEFAULT_PAGE_SIZE = 200;
+
   const state = {
     armed: false,
     status: {},              // component -> last event dict
@@ -40,7 +44,13 @@
     filterText: "",
     filterLevel: "",
     filterSource: "",
+    logPage: 0,
+    logPageSize: DEFAULT_PAGE_SIZE,
   };
+
+  // True while we're replaying a hydrate batch: render functions become no-ops
+  // so we only paint the DOM once after the whole backlog is consumed.
+  let hydrating = false;
 
   const LEVELS = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 };
 
@@ -108,7 +118,7 @@
   // price events in one tick) doesn't cause a restyle storm.
   let chartPending = false;
   const updateChart = () => {
-    if (!chartReady || !state.prices.length || chartPending) return;
+    if (hydrating || !chartReady || !state.prices.length || chartPending) return;
     chartPending = true;
     requestAnimationFrame(() => {
       chartPending = false;
@@ -167,6 +177,23 @@
   };
 
   const dispatch = (ev) => {
+    if (ev.ch === "__hydrate__") {
+      // Bulk-replay a history backlog in one go. Suppress per-event renders
+      // and do a single paint at the end so 2000-event reconnects are instant.
+      hydrating = true;
+      try {
+        for (const e of (ev.events || [])) dispatch(e);
+      } finally {
+        hydrating = false;
+      }
+      renderStatus();
+      renderLog();
+      renderOrders();
+      renderPnL();
+      renderSignalBox();
+      updateChart();
+      return;
+    }
     switch (ev.ch) {
       case "log":    addLog({ t: ev.t, ...ev.data }); renderLog(); break;
       case "status": state.status[ev.data.component] = { ...ev.data, last_ts: ev.t }; renderStatus(); break;
@@ -289,6 +316,7 @@
   };
 
   const renderSignalBox = () => {
+    if (hydrating) return;
     const s = state.lastSignal;
     const box = $("signal-box");
     if (!s) { box.innerHTML = `<div class="signal-empty">awaiting edge…</div>`; return; }
@@ -351,6 +379,7 @@
   };
 
   const renderOrders = () => {
+    if (hydrating) return;
     const wrap = $("order-list");
     wrap.innerHTML = state.orders.map(o => `
       <div class="order-item">
@@ -363,6 +392,7 @@
   };
 
   const renderPnL = () => {
+    if (hydrating) return;
     $("pnl").textContent = fmtUSD(state.pnlDay);
     $("pnl-trades").textContent = `${state.pnlTrades} trade${state.pnlTrades === 1 ? "" : "s"}`;
     const pnlTile = $("pnl").parentElement.parentElement;
@@ -375,6 +405,7 @@
 
   // ---------- Status / connections -------------------------------------------
   const renderStatus = () => {
+    if (hydrating) return;
     const el = $("status-list");
     const names = Object.keys(state.status).sort();
     if (!names.length) {
@@ -402,7 +433,9 @@
 
   // ---------- Log -------------------------------------------------------------
   const addLog = (r) => {
-    r._new = true;
+    // Skip the fade-in animation during bulk hydration — otherwise every one
+    // of a 1000-line backlog flashes in at once.
+    r._new = !hydrating;
     state.logs.push(r);
     if (r.source) state.sources.add(r.source);
     if (state.logs.length > LOG_MAX) state.logs.splice(0, 1000);
@@ -423,11 +456,37 @@
   };
 
   const renderLog = () => {
+    if (hydrating) return;
     const el = $("log");
     const auto = $("log-autoscroll").checked;
     const filtered = state.logs.filter(matchFilter);
-    $("log-count").textContent = `${filtered.length} / ${state.logs.length}`;
-    const slice = filtered.slice(-500);
+    const total = filtered.length;
+
+    // Auto-scroll implies "always stick to the newest page".
+    if (auto) state.logPage = 0;
+
+    const pageSize = state.logPageSize;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    // clamp page (page 0 = newest)
+    if (state.logPage < 0) state.logPage = 0;
+    if (state.logPage > totalPages - 1) state.logPage = totalPages - 1;
+
+    const endIdx = Math.max(0, total - state.logPage * pageSize);
+    const startIdx = Math.max(0, endIdx - pageSize);
+    const slice = filtered.slice(startIdx, endIdx);
+
+    $("log-count").textContent = `${total} / ${state.logs.length}`;
+    $("log-page-info").textContent =
+      total === 0
+        ? "0 / 0"
+        : `${startIdx + 1}–${endIdx} · pg ${state.logPage + 1}/${totalPages}`;
+
+    // Enable/disable pagination buttons
+    $("log-first").disabled = state.logPage >= totalPages - 1;
+    $("log-prev" ).disabled = state.logPage >= totalPages - 1;
+    $("log-next" ).disabled = state.logPage <= 0;
+    $("log-last" ).disabled = state.logPage <= 0;
+
     el.innerHTML = slice.map(r => {
       const t   = fmtTime(r.t);
       const src = r.source ?? "";
@@ -435,7 +494,10 @@
       r._new = false;
       return `<div class="${cls}"><span class="lt">${t}</span><span class="ls">${escapeHtml(src)}</span><span class="lm">${escapeHtml(r.msg ?? "")}</span></div>`;
     }).join("");
-    if (auto) el.scrollTop = el.scrollHeight;
+
+    // Only auto-scroll when viewing the newest page; keep scroll stable when paging.
+    if (auto && state.logPage === 0) el.scrollTop = el.scrollHeight;
+
     // Refresh source dropdown if new sources appeared
     const sel = $("log-source");
     if (state.sources.size !== (sel.options.length - 1)) {
@@ -477,9 +539,30 @@
     } catch (e) { alert("arm failed: " + e.message); }
   });
 
-  $("log-filter").addEventListener("input",  (e) => { state.filterText   = e.target.value; renderLog(); });
-  $("log-level" ).addEventListener("change", (e) => { state.filterLevel  = e.target.value; renderLog(); });
-  $("log-source").addEventListener("change", (e) => { state.filterSource = e.target.value; renderLog(); });
+  // Filter changes reset us to the newest page so users don't get stuck on an
+  // empty slice when the filter narrows results.
+  $("log-filter").addEventListener("input",  (e) => { state.filterText   = e.target.value; state.logPage = 0; renderLog(); });
+  $("log-level" ).addEventListener("change", (e) => { state.filterLevel  = e.target.value; state.logPage = 0; renderLog(); });
+  $("log-source").addEventListener("change", (e) => { state.filterSource = e.target.value; state.logPage = 0; renderLog(); });
+
+  // Pagination. Clicking "older" auto-disables auto-scroll since the two
+  // concepts are mutually exclusive (auto-scroll always sticks to page 0).
+  const goPage = (next) => {
+    state.logPage = next;
+    if (state.logPage > 0) $("log-autoscroll").checked = false;
+    renderLog();
+  };
+  $("log-first").addEventListener("click", () => goPage(Number.MAX_SAFE_INTEGER)); // oldest
+  $("log-prev" ).addEventListener("click", () => goPage(state.logPage + 1));
+  $("log-next" ).addEventListener("click", () => goPage(state.logPage - 1));
+  $("log-last" ).addEventListener("click", () => goPage(0));                        // newest
+  $("log-pagesize").addEventListener("change", (e) => {
+    const n = parseInt(e.target.value, 10);
+    if (Number.isFinite(n) && n > 0) { state.logPageSize = n; state.logPage = 0; renderLog(); }
+  });
+  $("log-autoscroll").addEventListener("change", (e) => {
+    if (e.target.checked) { state.logPage = 0; renderLog(); }
+  });
 
   // ---------- Clock (ET) ------------------------------------------------------
   const etClock = () => {

@@ -1,5 +1,19 @@
 """GEXbot realtime orderflow hub client (Azure Web PubSub).
 
+STATUS: EXPERIMENTAL / schema unverified.
+--------------------------------------------------------------
+Current observed output is garbage (e.g. ``spot=715141`` vs the correct
+``5910.xx``). The inner protobuf schema is a best-guess 1..37 field-number
+mapping (``ORDERFLOW_FIELD_MAP`` below) because GEXbot does not publish the
+.proto file. Without the real schema we cannot reliably decode wire-type
+vs named-type disagreements, so the strategy runner ignores this feed by
+default (``LIVE_GEXBOT_WS_ENABLED=0``) and instead consumes the REST
+historical endpoint via ``scripts/data_daemon.py`` -- which returns the
+same fields as plain JSON with a known-correct schema.
+
+Turn this on for reverse-engineering only:
+    LIVE_GEXBOT_WS_ENABLED=1
+
 Flow (per GEXbot docs + community example):
     1. GET /v2/negotiate  (Authorization: Bearer <key>)
          -> { websocket_urls: {classic, state_gex, state_greeks_zero, state_greeks_one, orderflow}, prefix }
@@ -301,12 +315,19 @@ class GEXbotHub:
         self._disconnected_evt.set()
 
     def _on_group_message(self, evt: OnGroupDataMessageArgs) -> None:
+        # Azure WebPubSub delivers binary payloads variously as bytes, bytearray,
+        # or memoryview depending on SDK / transport version. Text payloads are
+        # `str`. Normalize all to a concrete bytes buffer before protobuf parsing.
         try:
-            # data can be bytes or str. Azure WebPubSub delivers binary messages
-            # as bytes directly.
-            raw = evt.data if isinstance(evt.data, (bytes, bytearray)) else evt.data.encode()
+            data = evt.data
+            if isinstance(data, (bytes, bytearray, memoryview)):
+                raw = bytes(data)
+            elif isinstance(data, str):
+                raw = data.encode()
+            else:
+                raw = bytes(data)  # last-ditch: buffer protocol
         except Exception as e:  # noqa: BLE001
-            log.warning(f"gexbot data coerce failed: {e!r}")
+            log.warning(f"gexbot data coerce failed: {e!r} type={type(evt.data).__name__}")
             return
 
         # Outer envelope: google.protobuf.Any
@@ -336,15 +357,10 @@ class GEXbotHub:
             except Exception as e:  # noqa: BLE001
                 log.warning(f"flat-proto parse failed: {e!r}")
 
-        # Compact log line
-        if named:
-            preview = (f"spot={named.get('spot', '?')} "
-                       f"gexoflow={named.get('gexoflow', '?')} "
-                       f"dexoflow={named.get('dexoflow', '?')} "
-                       f"z_mlgamma={named.get('z_mlgamma', '?')}")
-            log.info(f"gexbot orderflow {preview}")
-        else:
-            log.info(f"gexbot msg type_url={type_url} len={len(decomp)} head={decomp[:24].hex()}")
+        # Per-message log line removed: orderflow ticks fire ~1/sec and drown
+        # the log stream. The payload is still published to the bus below, so
+        # the dashboard tiles/sparklines render it; parse failures are still
+        # surfaced by the `flat-proto parse failed` warning above.
 
         BUS.publish_threadsafe("flow", {
             "src": "gexbot",

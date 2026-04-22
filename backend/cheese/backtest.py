@@ -9,6 +9,16 @@ Fill conventions:
     - Time-stop and session-close exits fill at next bar OPEN + adverse slippage.
     - If stop and target are both hit in the same bar, assume stop fills first
       (pessimistic convention).
+    - Same-bar entry + stop/target: if the entry bar's H/L already breached the
+      stop or target, we close on the entry bar (pessimistic -- stop first if
+      both touched). Skipping this check is optimistic because it silently
+      assumes adverse same-bar moves didn't exist.
+
+Leakage protections:
+    - Entries use signals from bar i-1 and fill at bar i's OPEN. Stops and
+      targets are sized from ATR(i-1). Never uses future information.
+    - ATR, gamma regime, and flow z-scores are all built from rolling windows
+      that only look at past bars (cheese.features).
 """
 from __future__ import annotations
 
@@ -196,6 +206,53 @@ def run(
                 regime_entry = str(regime[i - 1])
                 trail_armed = False
                 bars_in = 0
+
+                # Same-bar-as-entry check: conservative. If the entry bar's
+                # H/L already crossed the stop or target after the open, close
+                # on this bar. Stop first when both touched. Without this the
+                # backtest is silently optimistic about fast adverse moves.
+                bar_high_e, bar_low_e = h[i], l[i]
+                stop_hit_e = (s == 1 and bar_low_e <= stop_px) or (s == -1 and bar_high_e >= stop_px)
+                tgt_hit_e = (s == 1 and bar_high_e >= target_px) or (s == -1 and bar_low_e <= target_px)
+                if stop_hit_e or tgt_hit_e:
+                    if stop_hit_e:
+                        exit_px_e = stop_px - s * slip
+                        exit_reason_e = "stop"
+                        exit_slip_usd = _slippage_points(bool(edge[i]), cfg) * ES_POINT_VALUE
+                    else:
+                        exit_px_e = target_px
+                        exit_reason_e = "target"
+                        exit_slip_usd = 0.0
+                    gross_pts = s * (exit_px_e - entry_px)
+                    gross_usd = gross_pts * ES_POINT_VALUE
+                    commission_usd = 2 * cfg.cost.commission_per_side
+                    entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg) * ES_POINT_VALUE
+                    friction_total_usd = commission_usd + entry_slip_usd + exit_slip_usd
+                    net_usd = gross_usd - commission_usd
+                    trades.append(
+                        Trade(
+                            strategy=strategy_name,
+                            side=side,
+                            entry_time=idx[entry_i],
+                            entry_px=float(entry_px),
+                            exit_time=idx[i],
+                            exit_px=float(exit_px_e),
+                            exit_reason=exit_reason_e,
+                            bars_held=0,
+                            stop_px=float(stop_px),
+                            target_px=float(target_px),
+                            atr_at_entry=float(atr_entry),
+                            gamma_regime=str(regime_entry),
+                            gross_points=float(gross_pts),
+                            gross_dollars=float(gross_usd),
+                            cost_dollars=float(friction_total_usd),
+                            net_dollars=float(net_usd),
+                        )
+                    )
+                    in_pos = False
+                    side = 0
+                    trail_armed = False
+                    bars_in = 0
 
     trades_df = pd.DataFrame([asdict(t) for t in trades])
     equity = _build_equity(idx, trades_df)
