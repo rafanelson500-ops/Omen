@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cheese · Live</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="%2360a5fa"/><path d="M6 20 L12 12 L18 16 L26 8" stroke="%23fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'>
+</head>
+<body>
+  <!-- ============================================================
+       SVG icon library (inline <symbol>s; referenced via <use>)
+       ============================================================ -->
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+      <linearGradient id="gradLogo" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#60a5fa"/>
+        <stop offset="50%" stop-color="#a78bfa"/>
+        <stop offset="100%" stop-color="#f472b6"/>
+      </linearGradient>
+      <linearGradient id="gradPriceArea" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#60a5fa" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="gradGain" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="#34d399" stop-opacity="0.5"/>
+        <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="gradLoss" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="#f87171" stop-opacity="0.5"/>
+        <stop offset="100%" stop-color="#f87171" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="gradHot" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0%" stop-color="#c084fc"/>
+        <stop offset="100%" stop-color="#f472b6"/>
+      </linearGradient>
+
+      <symbol id="i-logo" viewBox="0 0 40 40">
+        <path d="M20 3 L35 10 L35 27 L20 37 L5 27 L5 10 Z" fill="url(#gradLogo)" opacity="0.18"/>
+        <path d="M20 3 L35 10 L35 27 L20 37 L5 27 L5 10 Z" fill="none" stroke="url(#gradLogo)" stroke-width="1.6"/>
+        <path d="M10 26 L16 18 L22 23 L31 11" fill="none" stroke="#e7eaf0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="31" cy="11" r="2.6" fill="#f472b6"/>
+      </symbol>
+
+      <symbol id="i-bolt" viewBox="0 0 24 24">
+        <path d="M13 2 L4 14 h6 l-1 8 l10 -12 h-7 z" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24">
+        <path d="M22 12 h-4 l-3 9 l-6 -18 l-3 9 H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-target" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="12" cy="12" r="1.4" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 2 L20 5 V12 C20 17 16 21 12 22 C8 21 4 17 4 12 V5 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-signal" viewBox="0 0 24 24">
+        <path d="M3 20 H5 V17 H3 Z M8 20 H10 V13 H8 Z M13 20 H15 V9 H13 Z M18 20 H20 V4 H18 Z" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24">
+        <path d="M9 2 V6 M15 2 V6 M7 6 H17 V12 A5 5 0 0 1 7 12 Z M12 17 V22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M12 7 V12 L15.5 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="M12 4 L12 20 M4 12 L12 4 L20 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24">
+        <path d="M12 20 L12 4 M4 12 L12 20 L20 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <rect x="6" y="4" width="4" height="16" rx="1.2" fill="currentColor"/>
+        <rect x="14" y="4" width="4" height="16" rx="1.2" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M6 4 V20 L20 12 Z" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24">
+        <path d="M3 5 H21 L14 13 V20 L10 18 V13 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M16 16 L21 21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="i-radio" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+        <path d="M8 8 A6 6 0 0 0 8 16" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M16 8 A6 6 0 0 1 16 16" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M5 5 A10 10 0 0 0 5 19" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.6"/>
+        <path d="M19 5 A10 10 0 0 1 19 19" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.6"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="bg-ambient"></div>
+
+  <!-- ============================================================
+       Header
+       ============================================================ -->
+  <header class="nav">
+    <div class="nav-brand">
+      <svg class="nav-logo" aria-hidden="true"><use href="#i-logo"/></svg>
+      <div class="nav-brand-text">
+        <div class="nav-title">CHEESE</div>
+        <div class="nav-sub">GEX · ES · Tradovate</div>
+      </div>
+    </div>
+
+    <div class="nav-right">
+      <div class="nav-pill">
+        <svg class="ic"><use href="#i-radio"/></svg>
+        <span id="conn-count">0 / 0</span>
+        <span class="nav-pill-label">live</span>
+      </div>
+      <div class="nav-pill">
+        <svg class="ic"><use href="#i-clock"/></svg>
+        <span id="clock" class="mono">--:--:--</span>
+        <span class="nav-pill-label">ET</span>
+      </div>
+      <button id="arm-btn" class="btn-arm" aria-pressed="false">
+        <svg class="ic"><use href="#i-pause" id="arm-icon"/></svg>
+        <span id="arm-label">DISARMED</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================================================
+       Hero stat ribbon
+       ============================================================ -->
+  <section class="hero">
+    <div class="tile tile--price">
+      <div class="tile-head">
+        <span class="tile-icon accent-blue"><svg><use href="#i-activity"/></svg></span>
+        <span class="tile-title">ES Price</span>
+        <span id="price-src" class="tile-tag">--</span>
+      </div>
+      <div class="tile-body">
+        <div id="price" class="mono value-xl">--</div>
+        <div class="tile-change">
+          <svg id="price-arrow" class="ic-sm"><use href="#i-arrow-up"/></svg>
+          <span id="price-delta" class="mono">0.00</span>
+          <span id="price-pct" class="mono">(0.00%)</span>
+        </div>
+      </div>
+      <svg class="tile-spark" id="spark-price" viewBox="0 0 120 32" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="tile">
+      <div class="tile-head">
+        <span class="tile-icon accent-green"><svg><use href="#i-signal"/></svg></span>
+        <span class="tile-title">Day P&amp;L</span>
+        <span class="tile-tag" id="pnl-trades">0 trades</span>
+      </div>
+      <div class="tile-body">
+        <div id="pnl" class="mono value-lg">$0</div>
+        <div class="tile-change"><span class="tile-muted">realized</span></div>
+      </div>
+      <svg class="tile-spark" id="spark-pnl" viewBox="0 0 120 32" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="tile">
+      <div class="tile-head">
+        <span class="tile-icon accent-amber"><svg><use href="#i-shield"/></svg></span>
+        <span class="tile-title">Position</span>
+        <span id="pos-side-pill" class="tile-tag pill-neutral">FLAT</span>
+      </div>
+      <div class="tile-body">
+        <div id="pos-entry" class="mono value-md">—</div>
+        <div class="tile-change mono" id="pos-bracket">stop — · tgt —</div>
+      </div>
+    </div>
+
+    <div class="tile">
+      <div class="tile-head">
+        <span class="tile-icon accent-purple"><svg><use href="#i-bolt"/></svg></span>
+        <span class="tile-title">Flow Pressure</span>
+        <span class="tile-tag" id="flow-sigma">σ 0.0</span>
+      </div>
+      <div class="tile-body">
+        <div id="flow-val" class="mono value-lg">0.00</div>
+        <div class="tile-change"><span class="tile-muted" id="flow-label">gexoflow z-score</span></div>
+      </div>
+      <svg class="tile-spark" id="spark-flow" viewBox="0 0 120 32" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="tile">
+      <div class="tile-head">
+        <span class="tile-icon accent-pink"><svg><use href="#i-target"/></svg></span>
+        <span class="tile-title">Gamma Regime</span>
+        <span id="regime-pill" class="tile-tag pill-neutral">—</span>
+      </div>
+      <div class="tile-body">
+        <div id="regime-detail" class="value-md">—</div>
+        <div class="tile-change mono"><span class="tile-muted">ATR</span> <span id="atr-val">—</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       Main grid: chart | right stack (connections, signal)
+       ============================================================ -->
+  <section class="grid-main">
+    <div class="card card-chart">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-activity"/></svg> ES 1s</span>
+        <div class="chart-legend">
+          <span class="dot-blue"></span><span class="card-muted mono" id="chart-range">--:--–--:--</span>
+        </div>
+      </div>
+      <div id="price-chart" class="chart-surface"></div>
+    </div>
+
+    <div class="card card-right">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-plug"/></svg> Connections</span>
+        <span class="card-muted mono" id="conn-summary">—</span>
+      </div>
+      <ul id="status-list" class="conn-list"></ul>
+
+      <div class="divider"></div>
+
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-target"/></svg> Last Signal</span>
+      </div>
+      <div class="signal-box" id="signal-box">
+        <div class="signal-empty">awaiting edge…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       Lower grid: log | orders
+       ============================================================ -->
+  <section class="grid-lower">
+    <div class="card card-log">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-filter"/></svg> Log Stream</span>
+        <div class="log-controls">
+          <div class="input-wrap">
+            <svg class="ic ic-input"><use href="#i-search"/></svg>
+            <input id="log-filter" placeholder="filter · regex · !exclude">
+          </div>
+          <select id="log-level" class="select">
+            <option value="">ALL LEVELS</option>
+            <option value="DEBUG">DEBUG+</option>
+            <option value="INFO">INFO+</option>
+            <option value="WARNING">WARN+</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <select id="log-source" class="select"><option value="">ALL SOURCES</option></select>
+          <label class="chk">
+            <input type="checkbox" id="log-autoscroll" checked>
+            <span>auto</span>
+          </label>
+          <span id="log-count" class="card-muted mono">0</span>
+        </div>
+      </div>
+      <div id="log" class="log-surface"></div>
+    </div>
+
+    <div class="card card-orders">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-signal"/></svg> Orders / Fills</span>
+        <span class="card-muted mono" id="order-count">0</span>
+      </div>
+      <div id="order-list" class="order-list"></div>
+    </div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
