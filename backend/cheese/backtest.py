@@ -102,6 +102,12 @@ def run(
     slip_normal = _slippage_points(False, cfg)
     slip_edge = _slippage_points(True, cfg)
 
+    # Bars are right-labeled in market.load (label="right", closed="right"), so
+    # a bar labeled T covers (T - bar_width, T] and its `open` is at wall-clock
+    # T - bar_width. TradingView uses left-labels, so subtracting one bar width
+    # gives fill timestamps that line up with what a user sees on the chart.
+    bar_width = pd.Timedelta(cfg.bar_freq)
+
     close_time = time(15, 55)
 
     n = len(feat)
@@ -165,16 +171,27 @@ def run(
                 friction_total_usd = commission_usd + entry_slip_usd + exit_slip_usd
                 net_usd = gross_usd - commission_usd
 
+                # Fill timestamps are the left edge of the bar that actually
+                # produced the fill. Stop/target fill mid-bar `i`. Time and
+                # session-close exits fill at the *next* bar's open when one
+                # exists, so the fill bar is `i + 1` (its left edge == idx[i]).
+                entry_fill_ts = idx[entry_i] - bar_width
+                if exit_reason in ("time", "session_close") and i + 1 < n:
+                    exit_fill_ts = idx[i]              # == idx[i+1] - bar_width
+                else:
+                    exit_fill_ts = idx[i] - bar_width
+                bars_held_out = int(round((exit_fill_ts - entry_fill_ts) / bar_width))
+
                 trades.append(
                     Trade(
                         strategy=strategy_name,
                         side=side,
-                        entry_time=idx[entry_i],
+                        entry_time=entry_fill_ts,
                         entry_px=float(entry_px),
-                        exit_time=idx[i],
+                        exit_time=exit_fill_ts,
                         exit_px=float(exit_px),
                         exit_reason=exit_reason,
-                        bars_held=bars_in,
+                        bars_held=bars_held_out,
                         stop_px=float(stop_px),
                         target_px=float(target_px),
                         atr_at_entry=float(atr_entry),
@@ -229,13 +246,15 @@ def run(
                     entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg) * ES_POINT_VALUE
                     friction_total_usd = commission_usd + entry_slip_usd + exit_slip_usd
                     net_usd = gross_usd - commission_usd
+                    entry_fill_ts = idx[entry_i] - bar_width
+                    exit_fill_ts = entry_fill_ts  # same-bar fill
                     trades.append(
                         Trade(
                             strategy=strategy_name,
                             side=side,
-                            entry_time=idx[entry_i],
+                            entry_time=entry_fill_ts,
                             entry_px=float(entry_px),
-                            exit_time=idx[i],
+                            exit_time=exit_fill_ts,
                             exit_px=float(exit_px_e),
                             exit_reason=exit_reason_e,
                             bars_held=0,
@@ -267,10 +286,16 @@ def _bars_for_minutes(minutes: int, bar_freq: str) -> int:
 
 
 def _build_equity(index: pd.DatetimeIndex, trades: pd.DataFrame) -> pd.Series:
-    eq = pd.Series(0.0, index=index)
     if trades.empty:
-        return eq.cumsum()
-    # attribute each trade's P&L to its exit bar (realized PnL)
+        return pd.Series(0.0, index=index).cumsum()
+    # attribute each trade's P&L to its exit bar (realized PnL).
+    # Exit timestamps are wall-clock fill times (left edge of the fill bar)
+    # and may not line up exactly with `index` (e.g. a stop firing on the
+    # first RTH bar has exit_time = 09:30, which the RTH filter drops from
+    # the feature frame). Union the two indices before assigning so we never
+    # KeyError on a legitimate fill.
     pnl_by_time = trades.groupby("exit_time")["net_dollars"].sum()
+    combined = index.union(pnl_by_time.index).sort_values()
+    eq = pd.Series(0.0, index=combined)
     eq.loc[pnl_by_time.index] = pnl_by_time.values
     return eq.cumsum()

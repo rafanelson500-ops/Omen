@@ -177,13 +177,138 @@ class TradovateClient:
                     log.error(f"renew failed: {e!r}")
 
     # ---------- REST helpers -----------------------------------------------
-    async def list_accounts(self) -> list[dict]:
+    async def _rest_get(self, path: str, params: dict | None = None) -> Any:
         r = await self._http.get(
-            f"{self.s.tradovate_rest}/account/list",
+            f"{self.s.tradovate_rest}{path}",
+            params=params,
             headers={"Authorization": f"Bearer {self.auth.access_token}"},
         )
         r.raise_for_status()
         return r.json()
+
+    async def list_accounts(self) -> list[dict]:
+        return await self._rest_get("/account/list")
+
+    async def list_positions(self) -> list[dict]:
+        return await self._rest_get("/position/list")
+
+    async def list_orders(self) -> list[dict]:
+        return await self._rest_get("/order/list")
+
+    async def list_cash_balances(self) -> list[dict]:
+        return await self._rest_get("/cashBalance/list")
+
+    async def get_cash_balance_snapshot(self) -> dict | None:
+        """Best-effort current balance snapshot (includes net liq/realized/open P&L).
+
+        The v1 endpoint `/cashBalance/getcashbalancesnapshot` requires a POST
+        with {accountId}; we fall back to the latest item from `/cashBalance/list`
+        if the snapshot endpoint is unavailable.
+        """
+        if self.account_id is None:
+            return None
+        try:
+            r = await self._http.post(
+                f"{self.s.tradovate_rest}/cashBalance/getcashbalancesnapshot",
+                json={"accountId": self.account_id},
+                headers={"Authorization": f"Bearer {self.auth.access_token}"},
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            rows = await self.list_cash_balances()
+            mine = [b for b in rows if b.get("accountId") == self.account_id]
+            return mine[-1] if mine else (rows[-1] if rows else None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _contract_name(self, contract_id: int, cache: dict[int, str]) -> str:
+        if contract_id in cache:
+            return cache[contract_id]
+        try:
+            j = await self._rest_get("/contract/item", params={"id": contract_id})
+            name = j.get("name") or str(contract_id)
+        except Exception:  # noqa: BLE001
+            name = str(contract_id)
+        cache[contract_id] = name
+        return name
+
+    async def get_account_snapshot(self) -> dict:
+        """Fetch positions + working orders + balance for our account.
+
+        Contract IDs are resolved to symbol names so the dashboard can render
+        them directly without a second round-trip.
+        """
+        if not self.auth.access_token or self.account_id is None:
+            return {"ready": False}
+
+        positions, orders, balance = await asyncio.gather(
+            self.list_positions(), self.list_orders(), self.get_cash_balance_snapshot(),
+            return_exceptions=True,
+        )
+        if isinstance(positions, Exception):
+            log.warning(f"list_positions failed: {positions!r}")
+            positions = []
+        if isinstance(orders, Exception):
+            log.warning(f"list_orders failed: {orders!r}")
+            orders = []
+        if isinstance(balance, Exception):
+            log.warning(f"cash balance failed: {balance!r}")
+            balance = None
+
+        mine_pos = [p for p in positions if p.get("accountId") == self.account_id]
+        mine_pos = [p for p in mine_pos if (p.get("netPos") or 0) != 0]
+        # Working = not in a terminal state. Tradovate reports order state via
+        # /orderVersion but /order/list already exposes `ordStatus`.
+        TERMINAL = {"Filled", "Canceled", "Cancelled", "Rejected", "Expired"}
+        mine_ord = [o for o in orders
+                    if o.get("accountId") == self.account_id
+                    and (o.get("ordStatus") or "").strip() not in TERMINAL]
+
+        name_cache: dict[int, str] = {}
+        for p in mine_pos:
+            cid = p.get("contractId")
+            if cid is not None:
+                p["symbol"] = await self._contract_name(int(cid), name_cache)
+        for o in mine_ord:
+            cid = o.get("contractId")
+            if cid is not None:
+                o["symbol"] = await self._contract_name(int(cid), name_cache)
+
+        return {
+            "ready": True,
+            "account_id": self.account_id,
+            "account_spec": self.account_spec,
+            "positions": mine_pos,
+            "orders": mine_ord,
+            "balance": balance,
+        }
+
+    async def account_poll_loop(self, interval: float = 10.0) -> None:
+        """Background poller: pushes account snapshots onto the bus."""
+        await BUS.publish("status", {"component": "tradovate_account", "ok": False,
+                                     "note": "poll starting"})
+        while not self._shutdown.is_set():
+            try:
+                snap = await self.get_account_snapshot()
+                if snap.get("ready"):
+                    await BUS.publish("account", snap)
+                    await BUS.publish("status", {
+                        "component": "tradovate_account", "ok": True,
+                        "positions": len(snap.get("positions", [])),
+                        "orders": len(snap.get("orders", [])),
+                    })
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"account poll failed: {e!r}")
+                await BUS.publish("status", {"component": "tradovate_account",
+                                             "ok": False, "error": repr(e)})
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                continue
 
     async def find_front_month(self, symbol_root: str) -> dict:
         """Find the current front-month contract for a product root via REST."""

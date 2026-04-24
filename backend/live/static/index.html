@@ -228,10 +228,76 @@
       <div class="divider"></div>
 
       <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-bolt"/></svg> GEX Hydration</span>
+        <span class="card-muted mono" id="hydrate-count">0 / 20 bars</span>
+      </div>
+      <div class="hydrate-box">
+        <div class="progress" id="hydrate-progress">
+          <div class="progress-bar" id="hydrate-bar" style="width:0%"></div>
+        </div>
+        <div class="hydrate-meta mono">
+          <span id="hydrate-pct">0%</span>
+          <span id="hydrate-status" class="card-muted">warming…</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="card-head">
         <span class="card-title"><svg class="ic"><use href="#i-target"/></svg> Last Signal</span>
       </div>
       <div class="signal-box" id="signal-box">
         <div class="signal-empty">awaiting edge…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       Account: balance | positions | working orders
+       ============================================================ -->
+  <section class="grid-account">
+    <div class="card card-balance">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-signal"/></svg> Account</span>
+        <span class="card-muted mono" id="acct-name">—</span>
+      </div>
+      <div class="bal-grid">
+        <div class="bal-cell">
+          <span class="bal-k">Cash</span>
+          <span class="bal-v mono" id="bal-cash">—</span>
+        </div>
+        <div class="bal-cell">
+          <span class="bal-k">Net Liq</span>
+          <span class="bal-v mono" id="bal-netliq">—</span>
+        </div>
+        <div class="bal-cell">
+          <span class="bal-k">Open P&amp;L</span>
+          <span class="bal-v mono" id="bal-openpl">—</span>
+        </div>
+        <div class="bal-cell">
+          <span class="bal-k">Realized</span>
+          <span class="bal-v mono" id="bal-realized">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-positions">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-activity"/></svg> Positions</span>
+        <span class="card-muted mono" id="pos-count">0</span>
+      </div>
+      <div id="positions-list" class="positions-list">
+        <div class="empty-row">no open positions</div>
+      </div>
+    </div>
+
+    <div class="card card-working">
+      <div class="card-head">
+        <span class="card-title"><svg class="ic"><use href="#i-clock"/></svg> Working Orders</span>
+        <span class="card-muted mono" id="working-count">0</span>
+      </div>
+      <div id="working-list" class="working-list">
+        <div class="empty-row">no working orders</div>
       </div>
     </div>
   </section>
@@ -274,8 +340,9 @@
         <label class="chk pager-size">
           <span>per page</span>
           <select id="log-pagesize" class="select">
+            <option value="50" selected>50</option>
             <option value="100">100</option>
-            <option value="200" selected>200</option>
+            <option value="200">200</option>
             <option value="500">500</option>
             <option value="1000">1000</option>
           </select>
@@ -285,7 +352,7 @@
 
     <div class="card card-orders">
       <div class="card-head">
-        <span class="card-title"><svg class="ic"><use href="#i-signal"/></svg> Orders / Fills</span>
+        <span class="card-title"><svg class="ic"><use href="#i-signal"/></svg> Order Activity</span>
         <span class="card-muted mono" id="order-count">0</span>
       </div>
       <div id="order-list" class="order-list"></div>

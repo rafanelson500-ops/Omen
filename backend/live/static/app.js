@@ -24,8 +24,11 @@
   const PNL_RING   = 400;
 
   // Log pagination: page 0 = latest page, page 1 = one page older, etc.
-  const PAGE_SIZES = [100, 200, 500, 1000];
-  const DEFAULT_PAGE_SIZE = 200;
+  const PAGE_SIZES = [50, 100, 200, 500, 1000];
+  const DEFAULT_PAGE_SIZE = 50;
+
+  // GEX hydration warmup target (kept in sync with strategy_live.HYDRATION_TARGET_5M_BARS).
+  const HYDRATE_TARGET = 20;
 
   const state = {
     armed: false,
@@ -39,6 +42,8 @@
     position: { side: 0 },   // {side, entry_px, stop_px, target_px}
     lastSignal: null,
     orders: [],
+    account: null,           // {positions, orders, balance, account_spec}
+    hydrate: { bars: 0, target: HYDRATE_TARGET, pct: 0, ok: false },
     logs: [],
     sources: new Set(),
     filterText: "",
@@ -191,17 +196,35 @@
       renderOrders();
       renderPnL();
       renderSignalBox();
+      renderHydrate();
+      renderAccount();
       updateChart();
       return;
     }
     switch (ev.ch) {
       case "log":    addLog({ t: ev.t, ...ev.data }); renderLog(); break;
-      case "status": state.status[ev.data.component] = { ...ev.data, last_ts: ev.t }; renderStatus(); break;
+      case "status": onStatus(ev); break;
       case "price":  onPrice(ev);   break;
       case "signal": onSignal(ev);  break;
       case "order":  onOrder(ev);   break;
       case "flow":   onFlow(ev);    break;
+      case "account": onAccount(ev); break;
     }
+  };
+
+  const onStatus = (ev) => {
+    const d = ev.data || {};
+    state.status[d.component] = { ...d, last_ts: ev.t };
+    if (d.component === "gex_hydration") {
+      state.hydrate = {
+        bars: +d.bars || 0,
+        target: +d.target || HYDRATE_TARGET,
+        pct: +d.pct || 0,
+        ok: !!d.ok,
+      };
+      renderHydrate();
+    }
+    renderStatus();
   };
 
   // ---------- Price -----------------------------------------------------------
@@ -403,11 +426,136 @@
         fill: state.pnlDay >= 0 ? "url(#gradGain)" : "url(#gradLoss)" });
   };
 
+  // ---------- Hydration / warmup progress ------------------------------------
+  const renderHydrate = () => {
+    if (hydrating) return;
+    const h = state.hydrate || { bars: 0, target: HYDRATE_TARGET, pct: 0, ok: false };
+    const target = h.target || HYDRATE_TARGET;
+    const pct = Math.max(0, Math.min(1, h.pct || 0));
+    const bar = $("hydrate-bar");
+    const pctEl = $("hydrate-pct");
+    const cntEl = $("hydrate-count");
+    const stEl  = $("hydrate-status");
+    if (!bar || !pctEl || !cntEl || !stEl) return;
+    bar.style.width = (pct * 100).toFixed(1) + "%";
+    pctEl.textContent = (pct * 100).toFixed(0) + "%";
+    cntEl.textContent = `${h.bars} / ${target} bars`;
+    bar.classList.toggle("ok",   h.ok);
+    bar.classList.toggle("warm", !h.ok && pct > 0);
+    if (h.ok) {
+      stEl.textContent = "warmed · z-score live";
+      stEl.className = "ok";
+    } else if (h.bars === 0) {
+      stEl.textContent = "waiting for cache…";
+      stEl.className = "card-muted";
+    } else {
+      stEl.textContent = `${target - h.bars} more 5m bars`;
+      stEl.className = "card-muted";
+    }
+  };
+
+  // ---------- Account snapshot (positions / orders / balance) ----------------
+  const onAccount = (ev) => {
+    const d = ev.data || {};
+    if (!d.ready) return;
+    state.account = d;
+    renderAccount();
+  };
+
+  // Tradovate uses upper/lower case variants across endpoints; grab the first
+  // numeric field that matches any of the aliases.
+  const pickNum = (obj, keys) => {
+    if (!obj) return null;
+    for (const k of keys) {
+      const v = obj[k];
+      if (v != null && isFinite(+v)) return +v;
+    }
+    return null;
+  };
+
+  const renderAccount = () => {
+    if (hydrating) return;
+    const a = state.account;
+    const acctName = $("acct-name");
+    if (a?.account_spec) acctName.textContent = a.account_spec;
+
+    // ----- balance tiles
+    const b = a?.balance;
+    const cash    = pickNum(b, ["cashBalance", "amount", "totalCashValue"]);
+    const netLiq  = pickNum(b, ["netLiquidationValue", "netLiq", "totalNetLiq"]);
+    const openPL  = pickNum(b, ["openPL", "openPl", "unrealizedPL"]);
+    const realPL  = pickNum(b, ["realizedPL", "realizedPl"]);
+    $("bal-cash").textContent    = cash   == null ? "—" : fmtUSD(cash);
+    $("bal-netliq").textContent  = netLiq == null ? "—" : fmtUSD(netLiq);
+    $("bal-openpl").textContent  = openPL == null ? "—" : fmtUSD(openPL);
+    $("bal-realized").textContent= realPL == null ? "—" : fmtUSD(realPL);
+    const plEl = $("bal-openpl");
+    plEl.classList.toggle("up",   openPL != null && openPL > 0);
+    plEl.classList.toggle("down", openPL != null && openPL < 0);
+    const rlEl = $("bal-realized");
+    rlEl.classList.toggle("up",   realPL != null && realPL > 0);
+    rlEl.classList.toggle("down", realPL != null && realPL < 0);
+
+    // ----- positions
+    const positions = a?.positions ?? [];
+    const pList = $("positions-list");
+    $("pos-count").textContent = positions.length;
+    if (!positions.length) {
+      pList.innerHTML = `<div class="empty-row">no open positions</div>`;
+    } else {
+      pList.innerHTML = positions.map(p => {
+        const sym = p.symbol || p.contractId || "?";
+        const net = +p.netPos || 0;
+        const sideCls = net > 0 ? "long" : net < 0 ? "short" : "flat";
+        const sideLbl = net > 0 ? "LONG" : net < 0 ? "SHORT" : "FLAT";
+        const avg = pickNum(p, ["netPrice", "avgPrice", "netPos Cost"]);
+        const pl  = pickNum(p, ["openPL", "openPl", "unrealizedPL"]);
+        const plCls = pl == null ? "" : pl > 0 ? "up" : pl < 0 ? "down" : "";
+        return `
+          <div class="pos-row">
+            <span class="pos-sym">${escapeHtml(sym)}</span>
+            <span class="pos-side pill-${sideCls}">${sideLbl} ${Math.abs(net)}</span>
+            <span class="pos-avg mono">${avg == null ? "—" : avg.toFixed(2)}</span>
+            <span class="pos-pl mono ${plCls}">${pl == null ? "—" : fmtUSD(pl)}</span>
+          </div>`;
+      }).join("");
+    }
+
+    // ----- working orders
+    const orders = a?.orders ?? [];
+    const wList = $("working-list");
+    $("working-count").textContent = orders.length;
+    if (!orders.length) {
+      wList.innerHTML = `<div class="empty-row">no working orders</div>`;
+    } else {
+      wList.innerHTML = orders.map(o => {
+        const sym = o.symbol || o.contractId || "?";
+        const action = o.action || "—";
+        const qty = o.orderQty ?? o.qty ?? "";
+        const type = o.orderType || "";
+        const px = pickNum(o, ["price", "stopPrice", "limitPrice"]);
+        const status = o.ordStatus || o.status || "";
+        const actCls = /buy/i.test(action) ? "long" : /sell/i.test(action) ? "short" : "flat";
+        return `
+          <div class="work-row">
+            <span class="w-action pill-${actCls}">${escapeHtml(action)}</span>
+            <span class="w-qty mono">${escapeHtml(String(qty))}</span>
+            <span class="w-sym">${escapeHtml(sym)}</span>
+            <span class="w-type mono">${escapeHtml(type)}${px != null ? " @ " + px.toFixed(2) : ""}</span>
+            <span class="w-status mono">${escapeHtml(status)}</span>
+          </div>`;
+      }).join("");
+    }
+  };
+
   // ---------- Status / connections -------------------------------------------
   const renderStatus = () => {
     if (hydrating) return;
     const el = $("status-list");
-    const names = Object.keys(state.status).sort();
+    // `gex_hydration` has its own progress-bar UI; don't double-list it here.
+    const names = Object.keys(state.status)
+      .filter(n => n !== "gex_hydration")
+      .sort();
     if (!names.length) {
       el.innerHTML = `<li class="conn-item idle"><span class="dot"></span><span class="name">no components yet</span></li>`;
       $("conn-count").textContent = "0 / 0";
@@ -581,11 +729,30 @@
   fetch("/api/status").then(r => r.json()).then(j => {
     state.armed = !!j.armed;
     updateArmUI();
-    if (j.components) { state.status = j.components; renderStatus(); }
+    if (j.components) {
+      state.status = j.components;
+      const h = j.components["gex_hydration"];
+      if (h) {
+        state.hydrate = {
+          bars: +h.bars || 0,
+          target: +h.target || HYDRATE_TARGET,
+          pct: +h.pct || 0,
+          ok: !!h.ok,
+        };
+      }
+      renderStatus();
+      renderHydrate();
+    }
+  }).catch(() => {});
+
+  fetch("/api/account").then(r => r.ok ? r.json() : null).then(j => {
+    if (j && j.ready) { state.account = j; renderAccount(); }
   }).catch(() => {});
 
   initChart();
   renderPnL();
   renderSignalBox();
+  renderHydrate();
+  renderAccount();
   connect();
 })();

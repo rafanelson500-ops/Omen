@@ -20,7 +20,7 @@ console = Console()
 
 # Databento historical data has a ~15 min publishing delay on GLBX.MDP3.
 # Clamp the requested end timestamp to now - DATA_DELAY so the API never 422s.
-DATA_DELAY = timedelta(minutes=15)
+DATA_DELAY = timedelta(minutes=35)
 
 
 def _clamp_end(end: date) -> pd.Timestamp:
@@ -40,6 +40,11 @@ def _cache_path(start: date, end: date) -> Path:
     return MARKET_CACHE / f"ES_c_0_ohlcv1s_{start.isoformat()}_{end.isoformat()}.parquet"
 
 
+def _start_utc(start: date) -> pd.Timestamp:
+    """Start timestamp pinned to 09:25 ET on `start`, converted to UTC."""
+    return pd.Timestamp(datetime.combine(start, time(9, 25)), tz=ET).tz_convert(UTC)
+
+
 def estimate_cost(start: date, end: date, api_key: str) -> float:
     """Return Databento's estimated USD cost for the pull (no download)."""
     client = db.Historical(api_key)
@@ -48,7 +53,7 @@ def estimate_cost(start: date, end: date, api_key: str) -> float:
         symbols=[ES_CONTINUOUS_SYMBOL],
         stype_in="continuous",
         schema="ohlcv-1s",
-        start=pd.Timestamp(start, tz=ET).tz_convert(UTC),
+        start=_start_utc(start),
         end=_clamp_end(end),
     )
     return float(cost)
@@ -71,7 +76,7 @@ def fetch(
         return cache
 
     client = db.Historical(api_key)
-    start_utc = pd.Timestamp(start, tz=ET).tz_convert(UTC)
+    start_utc = _start_utc(start)
     end_utc = _clamp_end(end)
 
     console.print(

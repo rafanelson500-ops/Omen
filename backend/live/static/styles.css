@@ -148,13 +148,14 @@ body {
    Layout
    ========================================================================== */
 
-.hero       { padding: 20px 22px 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
-.grid-main  { padding: 14px 22px 0; display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
-.grid-lower { padding: 14px 22px 22px; display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+.hero         { padding: 20px 22px 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.grid-main    { padding: 14px 22px 0; display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+.grid-account { padding: 14px 22px 0; display: grid; grid-template-columns: 1fr 1.2fr 1.2fr; gap: 14px; }
+.grid-lower   { padding: 14px 22px 22px; display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
 
 @media (max-width: 1280px) {
   .hero { grid-template-columns: repeat(3, 1fr); }
-  .grid-main, .grid-lower { grid-template-columns: 1fr; }
+  .grid-main, .grid-lower, .grid-account { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
   .hero { grid-template-columns: 1fr 1fr; }
@@ -413,6 +414,128 @@ body {
 .pager-sep  { flex: 1; }
 .pager-size { color: var(--fg-3); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .pager-size .select { padding: 3px 6px; font-size: 11px; }
+
+/* ==========================================================================
+   Hydration progress bar
+   ========================================================================== */
+
+.hydrate-box {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 2px 0 4px;
+}
+.progress {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-1);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #60a5fa 0%, #a78bfa 100%);
+  box-shadow: 0 0 18px rgba(167, 139, 250, 0.35);
+  transition: width 400ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 200ms ease;
+  border-radius: 999px;
+}
+.progress-bar.warm {
+  background: linear-gradient(90deg, #fbbf24 0%, #f472b6 100%);
+  box-shadow: 0 0 18px rgba(244, 114, 182, 0.35);
+}
+.progress-bar.ok {
+  background: linear-gradient(90deg, #34d399 0%, #60a5fa 100%);
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.35);
+}
+.hydrate-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: var(--fg-2);
+}
+.hydrate-meta .ok { color: var(--green); }
+
+/* ==========================================================================
+   Account: balance / positions / working orders
+   ========================================================================== */
+
+.card-balance,
+.card-positions,
+.card-working { min-height: 160px; }
+
+.bal-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+  margin-top: 4px;
+}
+.bal-cell {
+  padding: 10px 12px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.bal-k { color: var(--fg-3); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.bal-v { font-size: 16px; color: var(--fg-0); font-weight: 500; }
+.bal-v.up   { color: var(--green); }
+.bal-v.down { color: var(--red);   }
+
+.positions-list, .working-list {
+  flex: 1; overflow: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding-right: 2px;
+}
+.empty-row {
+  color: var(--fg-3); font-style: italic; font-size: 12px;
+  padding: 10px 4px;
+}
+
+.pos-row {
+  display: grid; grid-template-columns: 80px auto 1fr 1fr; gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  font-size: 12px;
+}
+.pos-sym { font-weight: 600; color: var(--fg-0); letter-spacing: 0.03em; }
+.pos-side {
+  justify-self: start;
+  padding: 3px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  border: 1px solid transparent;
+}
+.pos-avg { color: var(--fg-2); justify-self: end; }
+.pos-pl  { color: var(--fg-1); justify-self: end; }
+.pos-pl.up   { color: var(--green); }
+.pos-pl.down { color: var(--red);   }
+
+.work-row {
+  display: grid; grid-template-columns: auto 40px 1fr auto auto; gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  font-size: 12px;
+}
+.w-action {
+  padding: 3px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  border: 1px solid transparent;
+}
+.w-qty  { color: var(--fg-1); text-align: right; }
+.w-sym  { color: var(--fg-0); font-weight: 500; }
+.w-type { color: var(--fg-2); font-size: 11px; }
+.w-status {
+  color: var(--fg-3); font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.positions-list::-webkit-scrollbar,
+.working-list::-webkit-scrollbar { width: 8px; height: 8px; }
+.positions-list::-webkit-scrollbar-thumb,
+.working-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
 
 /* ==========================================================================
    Orders

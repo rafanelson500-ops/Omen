@@ -18,7 +18,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 _CACHE_BUST = str(int(_time.time()))
 
 
-def build_app(runner=None) -> FastAPI:
+def build_app(runner=None, tradovate=None) -> FastAPI:
     app = FastAPI(title="Cheese Live")
 
     @app.get("/", response_class=HTMLResponse)
@@ -49,6 +49,21 @@ def build_app(runner=None) -> FastAPI:
     @app.get("/api/history")
     async def api_history() -> JSONResponse:
         return JSONResponse(BUS.history_snapshot())
+
+    @app.get("/api/account")
+    async def api_account() -> JSONResponse:
+        """On-demand snapshot of the Tradovate account (positions, working
+        orders, cash balance). The websocket also fan-outs these on the
+        `account` channel every ~10s via the poll loop."""
+        if tradovate is None:
+            return JSONResponse({"ready": False, "error": "no client"},
+                                status_code=503)
+        try:
+            snap = await tradovate.get_account_snapshot()
+            return JSONResponse(snap)
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse({"ready": False, "error": repr(e)},
+                                status_code=500)
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket) -> None:

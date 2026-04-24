@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -35,10 +36,19 @@ from live.tradovate import TradovateClient
 
 log = logger.get("main")
 
+# Shutdown budget before we hard-kill the process. Needed because third-party
+# libs (databento, azure webpubsub) sometimes hold background threads that
+# refuse to honour cancellation.
+SHUTDOWN_GRACE_S = 8.0
 
-async def supervised(name: str, coro_factory, *, restart_delay: float = 5.0) -> None:
-    """Restart a coroutine if it exits, with backoff."""
-    while True:
+
+async def supervised(name: str, coro_factory, *, stop: asyncio.Event,
+                     restart_delay: float = 5.0) -> None:
+    """Restart a coroutine if it exits, with backoff.
+
+    Stops restarting once `stop` is set so Ctrl-C doesn't race a restart.
+    """
+    while not stop.is_set():
         try:
             await coro_factory()
         except asyncio.CancelledError:
@@ -47,9 +57,16 @@ async def supervised(name: str, coro_factory, *, restart_delay: float = 5.0) -> 
             log.error(f"{name} crashed: {e!r}; restarting in {restart_delay}s")
             await BUS.publish("status", {"component": name, "ok": False, "error": repr(e)})
         else:
+            if stop.is_set():
+                return
             log.warning(f"{name} exited cleanly; restarting in {restart_delay}s")
             await BUS.publish("status", {"component": name, "ok": False, "exited": True})
-        await asyncio.sleep(restart_delay)
+        # Sleep with early-exit when shutdown fires mid-backoff.
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=restart_delay)
+            return
+        except asyncio.TimeoutError:
+            continue
 
 
 async def main() -> None:
@@ -94,30 +111,48 @@ async def main() -> None:
     async def _strat_flow():
         await runner.run()
 
-    tasks: list[asyncio.Task] = [asyncio.create_task(supervised("strategy", _strat_flow))]
+    async def _account_flow():
+        await tv.account_poll_loop(interval=10.0)
+
+    stop = asyncio.Event()
+
+    tasks: list[asyncio.Task] = [
+        asyncio.create_task(supervised("strategy", _strat_flow, stop=stop)),
+        asyncio.create_task(supervised("tradovate_account", _account_flow,
+                                       stop=stop, restart_delay=10.0)),
+    ]
     if s.gexbot_ws_enabled:
         log.info("gexbot_ws ENABLED (LIVE_GEXBOT_WS_ENABLED=1)")
-        tasks.append(asyncio.create_task(supervised("gexbot", _gex_flow)))
+        tasks.append(asyncio.create_task(supervised("gexbot", _gex_flow, stop=stop)))
     else:
         log.info("gexbot_ws disabled; strategy uses REST-fed cache via data_daemon.py")
     if s.databento_enabled:
         log.info("databento_live ENABLED (LIVE_DATABENTO_ENABLED=1)")
-        tasks.append(asyncio.create_task(supervised("databento_live", _dbn_flow)))
+        tasks.append(asyncio.create_task(supervised("databento_live", _dbn_flow, stop=stop)))
     else:
         log.info("databento_live disabled; strategy uses daemon-fed cache")
 
     # --- FastAPI server
-    app = build_app(runner=runner)
+    app = build_app(runner=runner, tradovate=tv)
     config = uvicorn.Config(app, host=s.host, port=s.port, log_level="warning",
                             access_log=False, lifespan="off")
     server = uvicorn.Server(config)
     log.info(f"dashboard http://{s.host}:{s.port}")
 
-    stop = asyncio.Event()
+    # Track how many shutdown signals we've received. First Ctrl-C runs the
+    # graceful path; a second press (or any signal after the grace window)
+    # escalates to os._exit() because some third-party libs hold threads
+    # that refuse to honour cancellation.
+    sig_count = {"n": 0}
 
     def _sig(*_a):
-        log.warning("shutdown signal received")
-        stop.set()
+        sig_count["n"] += 1
+        if sig_count["n"] == 1:
+            log.warning("shutdown signal received (Ctrl-C again to force-exit)")
+            stop.set()
+        else:
+            log.warning(f"force-exit on signal #{sig_count['n']}")
+            os._exit(130)
 
     loop = asyncio.get_running_loop()
     for sig_name in (signal.SIGINT, signal.SIGTERM):
@@ -128,9 +163,7 @@ async def main() -> None:
 
     server_task = asyncio.create_task(server.serve())
 
-    try:
-        await stop.wait()
-    finally:
+    async def _graceful_shutdown() -> None:
         log.info("shutting down ...")
         server.should_exit = True
         for t in tasks:
@@ -141,7 +174,21 @@ async def main() -> None:
         if dbn is not None:
             await dbn.close()
         await tv.close()
-        await server_task
+        server_task.cancel()
+        try:
+            await server_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+    try:
+        await stop.wait()
+    finally:
+        try:
+            await asyncio.wait_for(_graceful_shutdown(), timeout=SHUTDOWN_GRACE_S)
+        except asyncio.TimeoutError:
+            log.warning(f"graceful shutdown timed out after {SHUTDOWN_GRACE_S:.0f}s; "
+                        "force-exiting")
+            os._exit(130)
 
 
 if __name__ == "__main__":

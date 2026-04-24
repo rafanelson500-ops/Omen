@@ -71,8 +71,8 @@ def _run_strategy(
 # ---------- Sidebar --------------------------------------------------------
 st.sidebar.header("Run")
 
-default_days = 80
-n_days = st.sidebar.slider("trading days back", 5, 120, default_days, step=5)
+default_days = 14
+n_days = st.sidebar.slider("trading days back", 5, 120, default_days, step=1)
 freq = st.sidebar.radio("bar frequency", ["1min", "5min"], index=1, horizontal=True)
 
 available_days = gex.last_n_sessions(n_days)

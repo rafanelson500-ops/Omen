@@ -55,6 +55,12 @@ LOOKBACK = {
     "5min": pd.Timedelta(hours=72),
 }
 
+# Minimum bars required for the flow z-score rolling window to produce a valid
+# z (matches `features.FLOW_Z_WINDOW // 3` = 20). Until the cache has at least
+# this many 5-min GEX bars the strategy is effectively "warming up" and cannot
+# fire. The dashboard uses this to render a hydration progress bar.
+HYDRATION_TARGET_5M_BARS = 20
+
 
 @dataclass
 class PositionState:
@@ -103,21 +109,34 @@ class StrategyRunner:
         )
         await BUS.publish("status", {"component": "strategy", "ok": True,
                                      "armed": self._armed, "dry_run": self.s.dry_run})
-        try:
-            while True:
-                await asyncio.sleep(5.0)
-                try:
-                    await self._tick()
-                except Exception as e:  # noqa: BLE001
-                    log.error(f"tick error: {e!r}")
-        except asyncio.CancelledError:
-            return
+        # NOTE: do NOT swallow CancelledError here. The supervised() wrapper in
+        # run_live.py relies on cancellation propagating out so it knows to
+        # stop -- if we catch+return, it thinks the coroutine exited cleanly
+        # and helpfully restarts the strategy, defeating Ctrl-C shutdown.
+        while True:
+            await asyncio.sleep(5.0)
+            try:
+                await self._tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.error(f"tick error: {e!r}")
 
     # ---------- tick ------------------------------------------------------
     async def _tick(self) -> None:
         now = pd.Timestamp.now(tz=ET)
         lookback = LOOKBACK.get(self.s.bar_freq, pd.Timedelta(hours=24))
         since = now - lookback
+
+        # --- GEX cache scan (hydration progress) -----------------------
+        # Compute this FIRST, before any early-returns on ES data. Pulling
+        # the last 5 sessions from the REST-fed parquet cache -- this runs
+        # even outside RTH so the dashboard hydration bar reflects the
+        # historical cache as soon as the page loads, then keeps climbing
+        # as the daemon writes today's bars once the feed opens.
+        days = gex_mod.last_n_sessions(5)
+        gex_raw_all = gex_mod.load_range(days)
+        self._publish_hydration(gex_raw_all, now)
 
         # --- ES 1s bars from the daemon-written cache ------------------
         mkt_1s = cache.load_market_live(since=since)
@@ -148,13 +167,8 @@ class StrategyRunner:
         if len(mkt) < 20:
             return
 
-        # --- GEX bars from the REST per-day cache ---------------------
-        # Pull the last few sessions so the flow-z rolling window is fully
-        # warm regardless of when the runner started.
-        days = gex_mod.last_n_sessions(5)
-        gex_raw = gex_mod.load_range(days)
-        if not gex_raw.empty:
-            gex_raw = gex_raw[gex_raw.index >= since]
+        # Scope the GEX frame for feature building to the strategy lookback.
+        gex_raw = gex_raw_all[gex_raw_all.index >= since] if not gex_raw_all.empty else gex_raw_all
         if gex_raw.empty:
             log.warning("no GEX data in cache for the last 5 sessions; is the daemon running?")
             return
@@ -252,6 +266,39 @@ class StrategyRunner:
         except Exception as e:  # noqa: BLE001
             log.error(f"order submission failed: {e!r}")
             self._position = PositionState()  # reset; no exposure
+
+    def _publish_hydration(self, gex_raw: pd.DataFrame, now: pd.Timestamp) -> None:
+        """Emit the GEX warmup-progress status used by the dashboard.
+
+        Counts 5-min GEX bars *in the cache* (across the last few sessions),
+        not just within the strategy lookback window. This keeps the bar from
+        collapsing back to 0 outside RTH when the strategy's short lookback
+        excludes the previous session.
+        """
+        bars_ready = 0
+        if gex_raw is not None and not gex_raw.empty:
+            try:
+                gex_5m = gex_mod.resample(
+                    gex_raw.select_dtypes(include="number"), freq="5min",
+                )
+                gex_5m = gex_5m[gex_5m.index <= now]
+                flow_col = next((c for c in ("gexoflow_sum", "gexoflow")
+                                 if c in gex_5m.columns), None)
+                if flow_col is not None:
+                    bars_ready = int(gex_5m[flow_col].dropna().shape[0])
+                else:
+                    bars_ready = int(len(gex_5m))
+            except Exception:  # noqa: BLE001
+                bars_ready = 0
+        target = HYDRATION_TARGET_5M_BARS
+        pct = min(1.0, bars_ready / target) if target else 1.0
+        BUS.publish_nowait("status", {
+            "component": "gex_hydration",
+            "ok": bars_ready >= target,
+            "bars": bars_ready,
+            "target": target,
+            "pct": pct,
+        })
 
     async def _flatten(self, reason: str) -> None:
         pos = self._position
