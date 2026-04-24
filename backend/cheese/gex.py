@@ -118,6 +118,9 @@ def fetch_day(
         "User-Agent": USER_AGENT,
     }
     r = sess.get(url, headers=headers, timeout=30)
+    if r.status_code != 200:
+        print("url", url)
+        print("Error fetching GEXbot data:", r.status_code, r.text)
     if r.status_code == 404:
         miss.touch()
         return None

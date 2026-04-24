@@ -261,6 +261,7 @@ async def main() -> None:
 
     tasks: list[asyncio.Task] = []
     if gex_key:
+        print("gex_key", gex_key)
         tasks.append(asyncio.create_task(gex_loop(gex_key, stop), name="gex_loop"))
     if dbn_key:
         tasks.append(asyncio.create_task(es_loop(dbn_key, stop), name="es_loop"))
