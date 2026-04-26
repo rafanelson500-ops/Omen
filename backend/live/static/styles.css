@@ -456,6 +456,71 @@ body {
 .hydrate-meta .ok { color: var(--green); }
 
 /* ==========================================================================
+   GEX Live Tick -- raw sanity indicator in the right stack
+   ========================================================================== */
+.gexraw-box {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: rgba(10, 13, 21, 0.45);
+  transition: border-color 200ms ease, box-shadow 200ms ease, background 200ms ease;
+}
+.gexraw-box.fresh { border-color: rgba(52, 211, 153, 0.35); box-shadow: 0 0 18px rgba(52, 211, 153, 0.12); }
+.gexraw-box.stale { border-color: rgba(251, 191, 36, 0.35); box-shadow: 0 0 18px rgba(251, 191, 36, 0.10); }
+.gexraw-box.dead  { border-color: rgba(248, 113, 113, 0.40); box-shadow: 0 0 18px rgba(248, 113, 113, 0.15); }
+.gexraw-box.idle  { border-color: var(--border-1); }
+
+.gexraw-spot-row {
+  display: flex; align-items: baseline; gap: 8px;
+}
+.gexraw-k {
+  font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--fg-3);
+}
+.gexraw-spot {
+  font-size: 22px; font-weight: 600; color: var(--fg-0);
+  letter-spacing: -0.02em;
+}
+.gexraw-ticker {
+  margin-left: auto;
+  font-size: 10px; color: var(--fg-3);
+  padding: 2px 6px;
+  border: 1px solid var(--border-1);
+  border-radius: 4px;
+}
+
+.gexraw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.gexraw-cell {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+  min-width: 0;
+}
+.gexraw-cell .k {
+  font-size: 9px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--fg-3);
+}
+.gexraw-cell .v {
+  font-size: 12px; color: var(--fg-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.gexraw-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: var(--fg-2);
+}
+.gexraw-meta .ok   { color: var(--green); }
+.gexraw-meta .warn { color: var(--amber); }
+.gexraw-meta .err  { color: var(--red); }
+
+/* ==========================================================================
    Account: balance / positions / working orders
    ========================================================================== */
 

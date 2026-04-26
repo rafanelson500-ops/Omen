@@ -111,6 +111,21 @@ def run(
     close_time = time(15, 55)
 
     n = len(feat)
+
+    # End-of-session entry gate: disallow entries when fewer than
+    # (time_stop_bars + 1) bars remain in the session. If time-stop = 5 bars
+    # we require 6 bars of runway so the time-stop can fire cleanly before
+    # the forced session_close flatten steps on top of it.
+    max_bars_per_trade = _bars_for_minutes(cfg.exits.time_stop_min, cfg.bar_freq)
+    min_bars_runway = max_bars_per_trade + 1
+    # bars_left[i] = number of bars in the same calendar session with label >= idx[i]
+    dates_arr = np.array([ts.date() for ts in idx])
+    bars_left = np.zeros(n, dtype=np.int64)
+    for k in range(n - 1, -1, -1):
+        if k == n - 1 or dates_arr[k] != dates_arr[k + 1]:
+            bars_left[k] = 1
+        else:
+            bars_left[k] = bars_left[k + 1] + 1
     for i in range(n):
         if in_pos:
             bars_in += 1
@@ -211,6 +226,9 @@ def run(
         if not in_pos and i > 0 and sig_arr[i - 1] != 0:
             s = int(sig_arr[i - 1])
             a = atr[i - 1]
+            # end-of-session gate: need max_bars + 1 bars of runway (incl. this one)
+            if bars_left[i] < min_bars_runway:
+                continue
             if not np.isnan(a) and a > 0:
                 slip = slip_edge if edge[i] else slip_normal
                 entry_px = o[i] + s * slip

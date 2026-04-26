@@ -6,7 +6,7 @@ Run:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import pandas as pd
@@ -36,6 +36,11 @@ def _load_mkt(start: date, end: date, freq: str) -> pd.DataFrame:
     return market.load(start, end, freq=freq, rth_only=True)
 
 
+@st.cache_data(show_spinner="loading ES bars (live cache)...")
+def _load_mkt_live_day(day: date, freq: str) -> pd.DataFrame:
+    return market.load_live_day(day, freq=freq, rth_only=True)
+
+
 @st.cache_data(show_spinner="loading GEX...")
 def _load_gex(days_tuple: tuple[str, ...], freq: str) -> pd.DataFrame:
     days = [date.fromisoformat(d) for d in days_tuple]
@@ -51,13 +56,78 @@ def _build_feat(mkt_key: str, gex_key: str, mkt: pd.DataFrame, gx: pd.DataFrame)
 
 
 @st.cache_data(show_spinner=False)
+def _run_buy_hold_baseline(mkt: pd.DataFrame, commission: float, slip_ticks: float) -> tuple[pd.DataFrame, pd.Series]:
+    from cheese.config import ES_POINT_VALUE, ES_TICK_SIZE
+    slip_pts = slip_ticks * ES_TICK_SIZE
+    
+    trades = []
+    daily_times = []
+    daily_pnl = []
+    
+    for d, df_day in mkt.groupby(mkt.index.date):
+        if df_day.empty:
+            continue
+        first_bar = df_day.iloc[0]
+        last_bar = df_day.iloc[-1]
+        
+        entry_px = float(first_bar["open"] + slip_pts)
+        exit_px = float(last_bar["close"] - slip_pts)
+        
+        pts = exit_px - entry_px
+        gross_usd = pts * ES_POINT_VALUE
+        commission_usd = 2 * commission
+        # Friction is commission + 2 * slippage cost
+        friction_total_usd = commission_usd + 2 * slip_pts * ES_POINT_VALUE
+        net_usd = gross_usd - commission_usd
+        
+        trades.append({
+            "strategy": "buy_hold",
+            "side": 1,
+            "entry_time": df_day.index[0],
+            "entry_px": entry_px,
+            "exit_time": df_day.index[-1],
+            "exit_px": exit_px,
+            "exit_reason": "session_close",
+            "bars_held": len(df_day),
+            "stop_px": 0.0,
+            "target_px": 0.0,
+            "atr_at_entry": 0.0,
+            "gamma_regime": "unknown",
+            "gross_points": float(pts),
+            "gross_dollars": float(gross_usd),
+            "cost_dollars": float(friction_total_usd),
+            "net_dollars": float(net_usd),
+        })
+        daily_pnl.append(net_usd)
+        daily_times.append(df_day.index[-1])
+        
+    trades_df = pd.DataFrame(trades)
+    if trades_df.empty:
+        trades_df = pd.DataFrame(columns=[
+            "strategy", "side", "entry_time", "entry_px", "exit_time", "exit_px",
+            "exit_reason", "bars_held", "stop_px", "target_px", "atr_at_entry",
+            "gamma_regime", "gross_points", "gross_dollars", "cost_dollars", "net_dollars"
+        ])
+        return trades_df, pd.Series(dtype="float64")
+        
+    eq = pd.Series(daily_pnl, index=daily_times).cumsum()
+    return trades_df, eq
+
+
+@st.cache_data(show_spinner=False)
 def _run_strategy(
     strat_name: str, params: dict, feat_key: str, feat: pd.DataFrame, freq: str,
     cost_commission: float, cost_slip_ticks: float,
     stop_mult: float, tgt_mult: float, trail_r: float, time_min: int,
+    trade_start_time: time | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     strat = strategy.ALL_STRATEGIES[strat_name](**params)
     sig = strat.signals(feat)
+    
+    if trade_start_time is not None:
+        mask = feat.index.time < trade_start_time
+        sig.loc[mask] = 0
+
     cfg = BacktestConfig(
         bar_freq=freq,
         cost=CostModel(commission_per_side=cost_commission,
@@ -71,16 +141,47 @@ def _run_strategy(
 # ---------- Sidebar --------------------------------------------------------
 st.sidebar.header("Run")
 
-default_days = 14
-n_days = st.sidebar.slider("trading days back", 5, 120, default_days, step=1)
+mode = st.sidebar.radio(
+    "data source",
+    ["Historical range", "Single day (live cache)"],
+    index=0,
+    help=(
+        "Historical range: uses cached Databento pulls + GEXbot historical per-day files.\n"
+        "Single day: uses data/market_live/<date>.parquet + data/gex/<date>.parquet "
+        "written by the data daemon."
+    ),
+)
 freq = st.sidebar.radio("bar frequency", ["1min", "5min"], index=1, horizontal=True)
 
-available_days = gex.last_n_sessions(n_days)
-if not available_days:
-    st.sidebar.error("no trading days available")
-    st.stop()
-start, end = available_days[0], available_days[-1]
-st.sidebar.caption(f"{start} -> {end}  ({len(available_days)} sessions)")
+single_day: date | None = None
+if mode == "Single day (live cache)":
+    live_days = market.live_day_available()
+    gex_days = {date.fromisoformat(p.stem) for p in gex.GEX_CACHE.glob("*.parquet")}
+    candidates = sorted([d for d in live_days if d in gex_days], reverse=True)
+    if not candidates:
+        st.sidebar.error(
+            "no day has both data/market_live/<d>.parquet and data/gex/<d>.parquet. "
+            "run the data daemon first."
+        )
+        st.stop()
+    single_day = st.sidebar.selectbox(
+        "session",
+        candidates,
+        index=0,
+        format_func=lambda d: d.isoformat(),
+    )
+    available_days = [single_day]
+    start, end = single_day, single_day
+    st.sidebar.caption(f"{single_day}  (1 session, live cache)")
+else:
+    default_days = 14
+    n_days = st.sidebar.slider("trading days back", 5, 120, default_days, step=1)
+    available_days = gex.last_n_sessions(n_days)
+    if not available_days:
+        st.sidebar.error("no trading days available")
+        st.stop()
+    start, end = available_days[0], available_days[-1]
+    st.sidebar.caption(f"{start} -> {end}  ({len(available_days)} sessions)")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Strategy")
@@ -88,6 +189,10 @@ selected = ["flow_burst"]
 
 with st.sidebar.expander("Flow Burst params", expanded=True):
     z_thresh = st.slider("z_threshold", 1.0, 4.0, 2.0, 0.1)
+
+st.sidebar.markdown("---")
+st.sidebar.header("Trading Window")
+trade_start_time = st.sidebar.time_input("start time (ET)", value=time(9, 30))
 
 st.sidebar.markdown("---")
 st.sidebar.header("Risk / Exits")
@@ -106,15 +211,24 @@ st.title("Cheese: GEX ES Backtester")
 st.caption("GEXbot orderflow + ES.c.0 Databento 1s -> resampled bars -> ATR stop/target engine with realistic costs")
 
 try:
-    mkt = _load_mkt(start, end, freq)
+    if single_day is not None:
+        mkt = _load_mkt_live_day(single_day, freq)
+    else:
+        mkt = _load_mkt(start, end, freq)
 except FileNotFoundError as e:
     st.error(str(e))
-    st.info("run `python scripts/fetch_market.py --days 80` first")
+    if single_day is not None:
+        st.info("make sure the data daemon has written data/market_live/<date>.parquet")
+    else:
+        st.info("run `python scripts/fetch_market.py --days 80` first")
     st.stop()
 
 gex_bars = _load_gex(tuple(d.isoformat() for d in available_days), freq)
 if gex_bars.empty:
-    st.error("no GEX parquet cached. run `python scripts/fetch_gex.py --days 80`")
+    if single_day is not None:
+        st.error(f"no GEX parquet for {single_day} at data/gex/{single_day}.parquet")
+    else:
+        st.error("no GEX parquet cached. run `python scripts/fetch_gex.py --days 80`")
     st.stop()
 
 feat_key = f"{start}_{end}_{freq}_{len(mkt)}_{len(gex_bars)}"
@@ -137,12 +251,20 @@ def _params(name: str) -> dict:
 results: dict[str, tuple[pd.DataFrame, pd.Series, dict]] = {}
 with st.spinner("running backtests..."):
     for s_name in selected:
+        if s_name == "buy_hold":
+            continue
         trades, equity = _run_strategy(
             s_name, _params(s_name), feat_key, feat, freq,
             commission, slip_ticks, stop_mult, tgt_mult, trail_r, int(time_min),
+            trade_start_time,
         )
         summ = metrics.summarize(trades, equity)
         results[s_name] = (trades, equity, summ)
+
+    # Always include intraday buy & hold baseline
+    bh_trades, bh_equity = _run_buy_hold_baseline(mkt, commission, slip_ticks)
+    bh_summ = metrics.summarize(bh_trades, bh_equity)
+    results["buy_hold"] = (bh_trades, bh_equity, bh_summ)
 
 
 # ---------- Overview tab ---------------------------------------------------
@@ -179,10 +301,10 @@ with tab_overview:
 
 
 with tab_detail:
-    if not selected:
-        st.info("select at least one strategy")
+    if not results:
+        st.info("run at least one strategy")
     else:
-        which = st.selectbox("strategy", selected, format_func=lambda k: STRAT_DISPLAY[k])
+        which = st.selectbox("strategy", list(results.keys()), format_func=lambda k: STRAT_DISPLAY.get(k, k))
         trades, equity, summ = results[which]
 
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -248,14 +370,14 @@ with tab_features:
 
 
 with tab_trades:
-    if not selected:
-        st.info("select at least one strategy")
+    if not results:
+        st.info("run at least one strategy")
     else:
         rows = []
         for name, (trades, _, _) in results.items():
             if not trades.empty:
                 trades = trades.copy()
-                trades.insert(0, "strategy_name", STRAT_DISPLAY[name])
+                trades.insert(0, "strategy_name", STRAT_DISPLAY.get(name, name))
                 rows.append(trades)
         if rows:
             all_trades = pd.concat(rows, ignore_index=True)

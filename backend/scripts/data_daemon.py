@@ -3,12 +3,19 @@ strategy runner NEVER need a warmup period.
 
 Two independent loops run forever:
 
-1. **GEX REST poller**
-   Every ``DAEMON_GEX_POLL_S`` seconds (default 60s) re-downloads today's
-   GEXbot orderflow via the REST historical endpoint and overwrites
-   ``data/gex/<today>.parquet``. This is the system-of-record for flow
-   features (JSON schema is unambiguous; unlike the WS protobuf which is
-   schema-uncertain without the .proto file).
+1. **GEX 1Hz current-state poller**
+   Every ``DAEMON_GEX_POLL_S`` seconds (default 1s) GETs the GEXbot live
+   orderflow snapshot endpoint and appends the single returned record to
+   an in-memory batch. Every ``DAEMON_GEX_FLUSH_S`` seconds (default 10s)
+   the batch is merged (dedupe on ``timestamp``, keep=last) into
+   ``data/gex/<day>.parquet`` -- the same path and schema that
+   ``cheese.gex.fetch_day`` writes for historical backfills, so downstream
+   readers (strategy runner, backtester, dashboard) are agnostic about
+   whether today's file is being built live or was downloaded end-of-day.
+
+   We poll the live current-state endpoint (not ``/v2/hist/.../{date}``)
+   because the historical archive is only published at session close,
+   which is useless for intraday features.
 
 2. **Databento Live ES 1s subscriber**
    Streams ``ohlcv-1s`` for ES.c.0 continuous and batches writes every
@@ -20,7 +27,7 @@ Both loops prune files older than ``DAEMON_RETENTION_DAYS`` (default 5, which
 is 3-5x the longest feature lookback). Parquet writes are atomic so concurrent
 readers never see a half-written file.
 
-Run under screen / tmux / systemd — it has no interactive input:
+Run under screen / tmux / systemd -- it has no interactive input:
 
     screen -dmS cheesed python scripts/data_daemon.py
     screen -r cheesed                   # attach to see the log stream
@@ -29,7 +36,8 @@ Run under screen / tmux / systemd — it has no interactive input:
 Environment (reads from .env via python-dotenv):
     GEXBOT_API_KEY           (required for GEX loop)
     DATABENTO_API_KEY        (required for ES loop)
-    DAEMON_GEX_POLL_S        (default 60)
+    DAEMON_GEX_POLL_S        (default 1)
+    DAEMON_GEX_FLUSH_S       (default 10)
     DAEMON_ES_FLUSH_S        (default 10)
     DAEMON_RETENTION_DAYS    (default 5)
 """
@@ -40,16 +48,15 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 import databento as db
+import httpx
 import pandas as pd
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cheese import gex  # noqa: E402
 from cheese.config import DATABENTO_DATASET, ES_CONTINUOUS_SYMBOL, ET, GEX_CACHE  # noqa: E402
 from live import cache, logger  # noqa: E402
 
@@ -66,67 +73,118 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-GEX_POLL_INTERVAL_S = _int_env("DAEMON_GEX_POLL_S", 60)
+GEX_POLL_INTERVAL_S = _int_env("DAEMON_GEX_POLL_S", 1)
+GEX_FLUSH_INTERVAL_S = _int_env("DAEMON_GEX_FLUSH_S", 10)
 ES_FLUSH_INTERVAL_S = _int_env("DAEMON_ES_FLUSH_S", 10)
 RETENTION_DAYS = _int_env("DAEMON_RETENTION_DAYS", 5)
 
-
-def _clear_today_missing_sentinel(d) -> None:
-    """Remove a stale ``<date>.missing`` sentinel if one exists for today.
-
-    The sentinel is created by ``gex.fetch_day`` whenever the REST response
-    is empty or 404. For *historical* days this is correct ("this day truly
-    has no data"). For the *current* day it is a false positive -- the feed
-    just hasn't populated yet pre-market -- and leaving it behind confuses
-    anyone reading the cache directory. The daemon uses force=True so the
-    sentinel doesn't block re-fetches either way, but we still clear it.
-    """
-    miss = GEX_CACHE / f"{d.isoformat()}.missing"
-    if miss.exists():
-        try:
-            miss.unlink()
-        except OSError:
-            pass
+GEXBOT_LIVE_URL = "https://api.gexbot.com/ES_SPX/orderflow/orderflow"
+GEXBOT_USER_AGENT = "cheese-trading-daemon/1.0"
 
 
 # --------------------------------------------------------------------------
-# GEX REST poller
+# GEX 1Hz current-state poller + batched parquet flush
 # --------------------------------------------------------------------------
-async def gex_loop(api_key: str, stop: asyncio.Event) -> None:
-    log.info(f"gex poller: interval={GEX_POLL_INTERVAL_S}s retain={RETENTION_DAYS}d")
+async def _gex_periodic_flush(batch: list[dict], stop: asyncio.Event) -> None:
+    """Flush `batch` to the GEX cache every GEX_FLUSH_INTERVAL_S (or on stop)."""
     while not stop.is_set():
-        t0 = time.monotonic()
-        today = datetime.now(ET).date()
         try:
-            # force=True: re-download even if cached, because TODAY's file
-            # is incomplete until the session closes.
-            path = gex.fetch_day(today, api_key, force=True)
-            if path is not None:
-                df = gex.load_day(today)
-                rows = 0 if df is None else len(df)
-                log.info(f"gex refreshed {today} rows={rows:,}")
-            else:
-                # Empty/404 for today just means data hasn't populated yet
-                # (pre-market, weekend, or holiday). Unlike historical days,
-                # we should NOT leave a `.missing` sentinel behind -- it
-                # falsely implies the day is permanently data-less and clutters
-                # the cache.
-                log.info(f"gex no data yet for {today} (will retry)")
-            _clear_today_missing_sentinel(today)
-        except Exception as e:  # noqa: BLE001
-            log.error(f"gex fetch failed: {e!r}")
-
-        removed = cache.prune_stale(GEX_CACHE, RETENTION_DAYS)
-        if removed:
-            log.info(f"gex pruned {removed} old file(s)")
-
-        elapsed = time.monotonic() - t0
-        delay = max(1.0, GEX_POLL_INTERVAL_S - elapsed)
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=delay)
-            return
+            await asyncio.wait_for(stop.wait(), timeout=GEX_FLUSH_INTERVAL_S)
+            break
         except asyncio.TimeoutError:
-            continue
+            pass
+        if batch:
+            rows = batch[:]
+            batch.clear()
+            try:
+                written = cache.append_gex_live(rows)
+                log.info(f"gex flushed +{len(rows)} rows (file total={written:,})")
+            except Exception as e:  # noqa: BLE001
+                log.error(f"gex flush failed: {e!r}")
+
+
+async def gex_loop(api_key: str, stop: asyncio.Event) -> None:
+    log.info(
+        f"gex poller: poll={GEX_POLL_INTERVAL_S}s flush={GEX_FLUSH_INTERVAL_S}s "
+        f"retain={RETENTION_DAYS}d url={GEXBOT_LIVE_URL}"
+    )
+    batch: list[dict] = []
+    flush_task = asyncio.create_task(_gex_periodic_flush(batch, stop))
+    last_ts: int | None = None
+    last_prune = 0.0
+    auth_backoff_s = 30.0
+    # GEXbot rejects requests that present both Authorization header and
+    # ?key=<KEY> query param ("Multiple API keys detected"). Use the header
+    # alone -- it's accepted on both api.gex.bot/v2 and api.gexbot.com.
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "User-Agent": GEXBOT_USER_AGENT,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            while not stop.is_set():
+                t0 = time.monotonic()
+                try:
+                    r = await client.get(GEXBOT_LIVE_URL)
+                    if r.status_code == 200:
+                        rec = r.json()
+                        # Endpoint returns a single JSON object per call. The
+                        # server may repeat the same tick between publishes --
+                        # drop consecutive identical timestamps at ingest to
+                        # keep the batch (and the per-flush dedupe work) small.
+                        ts = rec.get("timestamp") if isinstance(rec, dict) else None
+                        if isinstance(ts, (int, float)) and rec.get("ticker"):
+                            ts_int = int(ts)
+                            if ts_int != last_ts:
+                                batch.append(rec)
+                                last_ts = ts_int
+                    elif r.status_code in (401, 403):
+                        log.error(
+                            f"gex auth error {r.status_code}: {r.text[:200]}; "
+                            f"backing off {auth_backoff_s:.0f}s"
+                        )
+                        try:
+                            await asyncio.wait_for(stop.wait(), timeout=auth_backoff_s)
+                            break
+                        except asyncio.TimeoutError:
+                            continue
+                    elif r.status_code == 404:
+                        # Pre-market / weekend / holiday — endpoint returns 404
+                        # until the feed is populated. Don't log per-tick.
+                        pass
+                    else:
+                        log.warning(f"gex HTTP {r.status_code}: {r.text[:160]}")
+                except httpx.HTTPError as e:
+                    log.warning(f"gex poll failed: {e!r}")
+                except Exception as e:  # noqa: BLE001
+                    log.warning(f"gex poll unexpected: {e!r}")
+
+                if time.monotonic() - last_prune > 3600:
+                    removed = cache.prune_stale(GEX_CACHE, RETENTION_DAYS)
+                    if removed:
+                        log.info(f"gex pruned {removed} old file(s)")
+                    last_prune = time.monotonic()
+
+                elapsed = time.monotonic() - t0
+                delay = max(0.05, GEX_POLL_INTERVAL_S - elapsed)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=delay)
+                    break
+                except asyncio.TimeoutError:
+                    continue
+    finally:
+        flush_task.cancel()
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            pass
+        if batch:
+            try:
+                cache.append_gex_live(batch)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # --------------------------------------------------------------------------
@@ -261,7 +319,6 @@ async def main() -> None:
 
     tasks: list[asyncio.Task] = []
     if gex_key:
-        print("gex_key", gex_key)
         tasks.append(asyncio.create_task(gex_loop(gex_key, stop), name="gex_loop"))
     if dbn_key:
         tasks.append(asyncio.create_task(es_loop(dbn_key, stop), name="es_loop"))

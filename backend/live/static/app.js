@@ -27,9 +27,6 @@
   const PAGE_SIZES = [50, 100, 200, 500, 1000];
   const DEFAULT_PAGE_SIZE = 50;
 
-  // GEX hydration warmup target (kept in sync with strategy_live.HYDRATION_TARGET_5M_BARS).
-  const HYDRATE_TARGET = 20;
-
   const state = {
     armed: false,
     status: {},              // component -> last event dict
@@ -43,7 +40,8 @@
     lastSignal: null,
     orders: [],
     account: null,           // {positions, orders, balance, account_spec}
-    hydrate: { bars: 0, target: HYDRATE_TARGET, pct: 0, ok: false },
+    hydrate: { z_bars: 0, z_target: 20, pct: 0, ok: false, detail: "" },
+    gexraw: null,            // { ts, age_s, received_at, spot, gexoflow, dexoflow, cvroflow, ticker }
     logs: [],
     sources: new Set(),
     filterText: "",
@@ -208,6 +206,7 @@
       case "signal": onSignal(ev);  break;
       case "order":  onOrder(ev);   break;
       case "flow":   onFlow(ev);    break;
+      case "gex_raw": onGexRaw(ev); break;
       case "account": onAccount(ev); break;
     }
   };
@@ -217,10 +216,11 @@
     state.status[d.component] = { ...d, last_ts: ev.t };
     if (d.component === "gex_hydration") {
       state.hydrate = {
-        bars: +d.bars || 0,
-        target: +d.target || HYDRATE_TARGET,
+        z_bars: +d.z_bars || 0,
+        z_target: +d.z_target || 20,
         pct: +d.pct || 0,
         ok: !!d.ok,
+        detail: typeof d.detail === "string" ? d.detail : "",
       };
       renderHydrate();
     }
@@ -426,11 +426,88 @@
         fill: state.pnlDay >= 0 ? "url(#gradGain)" : "url(#gradLoss)" });
   };
 
+  // ---------- Raw GEX tick indicator -----------------------------------------
+  // Proves the daemon -> parquet -> strategy pipeline is flowing BEFORE the
+  // z-score warmup completes. The server publishes once per 5s strategy tick;
+  // we refresh the "Xs ago" display every 500ms client-side so the user can
+  // see age increasing in real time (freezing == silent feed).
+  const fmtSigned = (n) => {
+    if (n == null || !isFinite(n)) return "—";
+    const v = +n;
+    return (v >= 0 ? "+" : "") + v.toFixed(2);
+  };
+  const fmtAge = (s) => {
+    if (!isFinite(s)) return "—";
+    if (s < 60)   return `${s.toFixed(1)}s ago`;
+    if (s < 3600) return `${(s / 60).toFixed(1)}m ago`;
+    return `${(s / 3600).toFixed(1)}h ago`;
+  };
+
+  const onGexRaw = (ev) => {
+    const d = ev.data || {};
+    if (!d.ok) {
+      state.gexraw = { ok: false, reason: d.reason || "no_data" };
+    } else {
+      state.gexraw = { ...d, received_at: Date.now() };
+    }
+    renderGexRaw();
+  };
+
+  const renderGexRaw = () => {
+    if (hydrating) return;
+    const g = state.gexraw;
+    const box    = $("gexraw-box");
+    const status = $("gexraw-status");
+    const ageEl  = $("gexraw-age");
+    if (!g || !g.ok) {
+      $("gexraw-spot").textContent   = "—";
+      $("gexraw-ticker").textContent = "";
+      $("gexraw-gex").textContent    = "—";
+      $("gexraw-dex").textContent    = "—";
+      $("gexraw-cvr").textContent    = "—";
+      $("gexraw-ts" ).textContent    = "—";
+      ageEl.textContent  = "—";
+      status.textContent = g?.reason === "no_cache" ? "no cache (daemon not running)" : "waiting for tick…";
+      status.className   = "card-muted";
+      box.className      = "gexraw-box idle";
+      return;
+    }
+    $("gexraw-spot").textContent   = (g.spot == null || !isFinite(g.spot)) ? "—" : (+g.spot).toFixed(2);
+    $("gexraw-ticker").textContent = g.ticker && g.ticker !== "?" ? g.ticker : "";
+    $("gexraw-gex").textContent    = fmtSigned(g.gexoflow);
+    $("gexraw-dex").textContent    = fmtSigned(g.dexoflow);
+    $("gexraw-cvr").textContent    = fmtSigned(g.cvroflow);
+    $("gexraw-ts" ).textContent    = fmtTime(g.ts);
+    updateGexRawAge();
+  };
+
+  const updateGexRawAge = () => {
+    const g = state.gexraw;
+    const ageEl  = $("gexraw-age");
+    const status = $("gexraw-status");
+    const box    = $("gexraw-box");
+    if (!g || !g.ok) return;
+    const drift = (Date.now() - (g.received_at || Date.now())) / 1000;
+    const age   = Math.max(0, (+g.age_s || 0) + drift);
+    ageEl.textContent = fmtAge(age);
+    const tier = age < 15 ? "fresh" : age < 60 ? "stale" : "dead";
+    box.className = `gexraw-box ${tier}`;
+    if (tier === "fresh") {
+      status.textContent = "feed live";
+      status.className   = "ok";
+    } else if (tier === "stale") {
+      status.textContent = "last tick getting old…";
+      status.className   = "warn";
+    } else {
+      status.textContent = "feed silent (daemon down?)";
+      status.className   = "err";
+    }
+  };
+
   // ---------- Hydration / warmup progress ------------------------------------
   const renderHydrate = () => {
     if (hydrating) return;
-    const h = state.hydrate || { bars: 0, target: HYDRATE_TARGET, pct: 0, ok: false };
-    const target = h.target || HYDRATE_TARGET;
+    const h = state.hydrate || { z_bars: 0, z_target: 20, pct: 0, ok: false, detail: "" };
     const pct = Math.max(0, Math.min(1, h.pct || 0));
     const bar = $("hydrate-bar");
     const pctEl = $("hydrate-pct");
@@ -439,19 +516,11 @@
     if (!bar || !pctEl || !cntEl || !stEl) return;
     bar.style.width = (pct * 100).toFixed(1) + "%";
     pctEl.textContent = (pct * 100).toFixed(0) + "%";
-    cntEl.textContent = `${h.bars} / ${target} bars`;
+    cntEl.textContent = `${h.z_bars} / ${h.z_target} bars`;
     bar.classList.toggle("ok",   h.ok);
     bar.classList.toggle("warm", !h.ok && pct > 0);
-    if (h.ok) {
-      stEl.textContent = "warmed · z-score live";
-      stEl.className = "ok";
-    } else if (h.bars === 0) {
-      stEl.textContent = "waiting for cache…";
-      stEl.className = "card-muted";
-    } else {
-      stEl.textContent = `${target - h.bars} more 5m bars`;
-      stEl.className = "card-muted";
-    }
+    stEl.className   = h.ok ? "ok" : "card-muted";
+    stEl.textContent = h.detail || (h.ok ? "warmed" : "warming…");
   };
 
   // ---------- Account snapshot (positions / orders / balance) ----------------
@@ -724,6 +793,7 @@
   };
   etClock();
   setInterval(etClock, 1000);
+  setInterval(updateGexRawAge, 500);
 
   // ---------- Initial hydrate -------------------------------------------------
   fetch("/api/status").then(r => r.json()).then(j => {
@@ -734,10 +804,11 @@
       const h = j.components["gex_hydration"];
       if (h) {
         state.hydrate = {
-          bars: +h.bars || 0,
-          target: +h.target || HYDRATE_TARGET,
+          z_bars: +h.z_bars || 0,
+          z_target: +h.z_target || 20,
           pct: +h.pct || 0,
           ok: !!h.ok,
+          detail: typeof h.detail === "string" ? h.detail : "",
         };
       }
       renderStatus();
@@ -753,6 +824,7 @@
   renderPnL();
   renderSignalBox();
   renderHydrate();
+  renderGexRaw();
   renderAccount();
   connect();
 })();

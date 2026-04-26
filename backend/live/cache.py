@@ -5,8 +5,8 @@ Purpose
 Eliminate the "warmup" period for the live strategy and dashboard. A separate
 daemon (``scripts/data_daemon.py``) continuously writes:
 
-    data/gex/{YYYY-MM-DD}.parquet          -- GEXbot REST orderflow (existing)
-    data/market_live/{YYYY-MM-DD}.parquet  -- Databento Live 1s ES OHLCV (new)
+    data/gex/{YYYY-MM-DD}.parquet          -- GEXbot 1Hz orderflow snapshots
+    data/market_live/{YYYY-MM-DD}.parquet  -- Databento Live 1s ES OHLCV
 
 Readers (``StrategyRunner``, Streamlit backtester) load the most recent N days
 on demand. The daemon runs independently under ``screen`` / ``systemd`` so the
@@ -20,6 +20,9 @@ Design notes
   ``os.replace()``'d into place (POSIX atomic rename).
 * Timestamps are stored naive-UTC in parquet and re-localized to ET on load;
   this matches how ``cheese.gex`` already handles per-day files.
+* GEX files share the same path and schema as ``cheese.gex.fetch_day`` writes,
+  so ``gex.load_day`` / ``gex.load_range`` are drop-in whether the file was
+  built by the historical backfiller or the 1Hz live poller.
 """
 from __future__ import annotations
 
@@ -30,21 +33,26 @@ from pathlib import Path
 
 import pandas as pd
 
-from cheese.config import DATA_DIR, ET
+from cheese.config import DATA_DIR, ET, GEX_CACHE
 
 MARKET_LIVE_CACHE = DATA_DIR / "market_live"
 MARKET_LIVE_CACHE.mkdir(parents=True, exist_ok=True)
+GEX_CACHE.mkdir(parents=True, exist_ok=True)
 
 
 # ---------- Atomic parquet write --------------------------------------------
-def atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
-    """Write `df` to `path` atomically via write-to-tmp + rename."""
+def atomic_write_parquet(df: pd.DataFrame, path: Path, *, index: bool = True) -> None:
+    """Write `df` to `path` atomically via write-to-tmp + rename.
+
+    Set ``index=False`` for columnar tables that store their timestamp as a
+    column (e.g. the GEX cache schema, which matches ``gex.fetch_day``).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".parquet", dir=str(path.parent))
     os.close(fd)
     tmp_path = Path(tmp)
     try:
-        df.to_parquet(tmp_path, index=True)
+        df.to_parquet(tmp_path, index=index)
         os.replace(tmp_path, path)
     finally:
         if tmp_path.exists():
@@ -89,6 +97,62 @@ def append_market_live(rows: list[dict]) -> int:
         else:
             combined = new
         atomic_write_parquet(combined, path)
+        total += len(combined)
+    return total
+
+
+# ---------- GEX live 1Hz cache ----------------------------------------------
+def gex_live_path(d: date) -> Path:
+    return GEX_CACHE / f"{d.isoformat()}.parquet"
+
+
+def append_gex_live(rows: list[dict]) -> int:
+    """Merge a batch of GEXbot 1Hz current-state snapshots into the per-day
+    GEX parquet cache. Schema matches ``cheese.gex.fetch_day``:
+
+    * Each row is the raw JSON dict returned by
+      ``https://api.gexbot.com/ES_SPX/orderflow/orderflow`` (unix-seconds
+      ``timestamp``, ``ticker``, ``spot``, plus the 35 Greek / flow fields).
+    * Written columnar (``index=False``) with ``timestamp`` coerced to
+      tz-aware ET ``datetime64[ns, America/New_York]`` so
+      ``gex.load_day`` can pick the file up without caring whether it came
+      from the historical backfiller or the 1Hz live daemon.
+
+    Rows are grouped by session date, merged with any pre-existing file
+    (end-of-day from ``fetch_day`` or an earlier live flush), deduped on
+    timestamp (keeping the newer observation), sorted, and atomically
+    replaced. Returns total rows written across all affected day files.
+    """
+    if not rows:
+        return 0
+
+    df = pd.DataFrame(rows)
+    if "timestamp" not in df.columns:
+        return 0
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert(ET)
+    df = df.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
+
+    total = 0
+    for d, grp in df.groupby(df["timestamp"].dt.date):
+        grp = grp.reset_index(drop=True)
+        path = gex_live_path(d)
+        if path.exists():
+            try:
+                prev = pd.read_parquet(path)
+                prev["timestamp"] = (
+                    pd.to_datetime(prev["timestamp"], utc=True).dt.tz_convert(ET)
+                )
+                combined = pd.concat([prev, grp], ignore_index=True)
+                combined = (
+                    combined.sort_values("timestamp")
+                    .drop_duplicates("timestamp", keep="last")
+                    .reset_index(drop=True)
+                )
+            except Exception:
+                combined = grp
+        else:
+            combined = grp
+        atomic_write_parquet(combined, path, index=False)
         total += len(combined)
     return total
 
@@ -140,9 +204,12 @@ def prune_stale(directory: Path, retain_days: int) -> int:
 
 __all__ = [
     "MARKET_LIVE_CACHE",
+    "GEX_CACHE",
     "atomic_write_parquet",
     "market_live_path",
     "append_market_live",
     "load_market_live",
+    "gex_live_path",
+    "append_gex_live",
     "prune_stale",
 ]

@@ -9,12 +9,15 @@ import pandas as pd
 from rich.console import Console
 
 from cheese.config import (
+    DATA_DIR,
     DATABENTO_DATASET,
     ES_CONTINUOUS_SYMBOL,
     ET,
     MARKET_CACHE,
     UTC,
 )
+
+MARKET_LIVE_CACHE = DATA_DIR / "market_live"
 
 console = Console()
 
@@ -128,6 +131,54 @@ def load(start: date, end: date, freq: str = "1min", rth_only: bool = True) -> p
               .dropna(subset=["close"])
         )
         # resample can create bars spanning the overnight gap; drop those
+        t = df.index.time
+        df = df[(t > time(9, 30)) & (t <= time(16, 0))]
+
+    return df
+
+
+def _live_day_path(d: date) -> Path:
+    return MARKET_LIVE_CACHE / f"{d.isoformat()}.parquet"
+
+
+def live_day_available() -> list[date]:
+    """Return sorted list of dates for which data/market_live/<d>.parquet exists."""
+    if not MARKET_LIVE_CACHE.exists():
+        return []
+    out: list[date] = []
+    for p in MARKET_LIVE_CACHE.glob("*.parquet"):
+        try:
+            out.append(date.fromisoformat(p.stem))
+        except ValueError:
+            continue
+    return sorted(out)
+
+
+def load_live_day(d: date, freq: str = "1min", rth_only: bool = True) -> pd.DataFrame:
+    """Load one day of ES 1s OHLCV from the live daemon cache and resample.
+
+    Mirrors ``load()`` but reads ``data/market_live/<YYYY-MM-DD>.parquet`` (written
+    by ``scripts/data_daemon.py``) instead of the historical Databento range cache.
+    """
+    path = _live_day_path(d)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No market_live parquet for {d}. Run the data daemon or check {path}."
+        )
+    df = pd.read_parquet(path)
+    df.index = pd.to_datetime(df.index, utc=True).tz_convert(ET)
+    df = df.sort_index()
+
+    if rth_only:
+        t = df.index.time
+        df = df[(t >= time(9, 30)) & (t < time(16, 0))]
+
+    if freq != "1s":
+        df = (
+            df.resample(freq, label="right", closed="right")
+              .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+              .dropna(subset=["close"])
+        )
         t = df.index.time
         df = df[(t > time(9, 30)) & (t <= time(16, 0))]
 
