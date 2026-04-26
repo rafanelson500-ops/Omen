@@ -31,9 +31,7 @@ import pandas as pd
 
 from cheese.config import (
     BacktestConfig,
-    ES_POINT_VALUE,
-    ES_TICK_SIZE,
-    ES_TICK_VALUE,
+    INSTRUMENTS,
     round_to_tick,
 )
 
@@ -42,6 +40,7 @@ from cheese.config import (
 class Trade:
     strategy: str
     side: int                 # +1 long, -1 short
+    contracts: int
     entry_time: pd.Timestamp
     entry_px: float
     exit_time: pd.Timestamp
@@ -58,10 +57,10 @@ class Trade:
     net_dollars: float
 
 
-def _slippage_points(bars_edge: bool, cfg: BacktestConfig) -> float:
-    """Per-side slippage converted into ES points."""
+def _slippage_points(bars_edge: bool, cfg: BacktestConfig, tk_sz: float) -> float:
+    """Per-side slippage converted into points."""
     mult = cfg.cost.edge_slippage_mult if bars_edge else 1.0
-    return cfg.cost.slippage_ticks_per_side * mult * ES_TICK_SIZE
+    return cfg.cost.slippage_ticks_per_side * mult * tk_sz
 
 
 def run(
@@ -92,6 +91,7 @@ def run(
     trades: list[Trade] = []
     in_pos = False
     side = 0
+    contracts = 0
     entry_i = -1
     entry_px = stop_px = target_px = 0.0
     atr_entry = 0.0
@@ -99,8 +99,12 @@ def run(
     regime_entry = "unknown"
     bars_in = 0
 
-    slip_normal = _slippage_points(False, cfg)
-    slip_edge = _slippage_points(True, cfg)
+    inst = INSTRUMENTS.get(cfg.instrument, INSTRUMENTS["ES"])
+    tk_sz = inst.tick_size
+    pt_val = inst.point_value
+
+    slip_normal = _slippage_points(False, cfg, tk_sz)
+    slip_edge = _slippage_points(True, cfg, tk_sz)
 
     # Bars are right-labeled in market.load (label="right", closed="right"), so
     # a bar labeled T covers (T - bar_width, T] and its `open` is at wall-clock
@@ -134,10 +138,10 @@ def run(
             if cfg.exits.trail_after_r > 0 and not trail_armed:
                 r_move = cfg.exits.stop_atr_mult * atr_entry * cfg.exits.trail_after_r
                 if side == 1 and bar_high - entry_px >= r_move:
-                    stop_px = round_to_tick(max(stop_px, entry_px))
+                    stop_px = round_to_tick(max(stop_px, entry_px), tk_sz)
                     trail_armed = True
                 elif side == -1 and entry_px - bar_low >= r_move:
-                    stop_px = round_to_tick(min(stop_px, entry_px))
+                    stop_px = round_to_tick(min(stop_px, entry_px), tk_sz)
                     trail_armed = True
 
             exit_reason: Optional[str] = None
@@ -179,10 +183,10 @@ def run(
                 # so the only *additional* explicit friction is commission.
                 # cost_dollars is total friction (commission + slippage) for reporting.
                 gross_pts = side * (exit_px - entry_px)
-                gross_usd = gross_pts * ES_POINT_VALUE
-                commission_usd = 2 * cfg.cost.commission_per_side
-                entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg) * ES_POINT_VALUE
-                exit_slip_usd = 0.0 if exit_reason == "target" else _slippage_points(bool(edge[i]), cfg) * ES_POINT_VALUE
+                gross_usd = gross_pts * pt_val * contracts
+                commission_usd = 2 * cfg.cost.commission_per_side * contracts
+                entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg, tk_sz) * pt_val * contracts
+                exit_slip_usd = 0.0 if exit_reason == "target" else _slippage_points(bool(edge[i]), cfg, tk_sz) * pt_val * contracts
                 friction_total_usd = commission_usd + entry_slip_usd + exit_slip_usd
                 net_usd = gross_usd - commission_usd
 
@@ -201,6 +205,7 @@ def run(
                     Trade(
                         strategy=strategy_name,
                         side=side,
+                        contracts=contracts,
                         entry_time=entry_fill_ts,
                         entry_px=float(entry_px),
                         exit_time=exit_fill_ts,
@@ -230,10 +235,32 @@ def run(
             if bars_left[i] < min_bars_runway:
                 continue
             if not np.isnan(a) and a > 0:
+                contracts = cfg.static_quantity
+                if cfg.sizing_mode == "kelly" and trades and len(trades) >= 10:
+                    net_pnls = [t.net_dollars for t in trades]
+                    wins = [x for x in net_pnls if x > 0]
+                    losses = [x for x in net_pnls if x <= 0]
+                    if wins and losses:
+                        win_rate = len(wins) / len(net_pnls)
+                        avg_win = sum(wins) / len(wins)
+                        avg_loss = abs(sum(losses) / len(losses))
+                        R = avg_win / avg_loss
+                        k = win_rate - ((1 - win_rate) / R)
+                        k = max(0.0, min(k, 1.0))
+                        
+                        fractional_k = k * cfg.kelly_fraction
+                        if fractional_k > 0:
+                            risk_pts = cfg.exits.stop_atr_mult * a
+                            risk_usd = risk_pts * pt_val
+                            current_equity = cfg.account_size + sum(net_pnls)
+                            if current_equity > 0 and risk_usd > 0:
+                                ideal_contracts = (current_equity * fractional_k) / risk_usd
+                                contracts = max(1, int(ideal_contracts))
+
                 slip = slip_edge if edge[i] else slip_normal
                 entry_px = o[i] + s * slip
-                stop_px = round_to_tick(entry_px - s * cfg.exits.stop_atr_mult * a)
-                target_px = round_to_tick(entry_px + s * cfg.exits.target_atr_mult * a)
+                stop_px = round_to_tick(entry_px - s * cfg.exits.stop_atr_mult * a, tk_sz)
+                target_px = round_to_tick(entry_px + s * cfg.exits.target_atr_mult * a, tk_sz)
                 in_pos = True
                 side = s
                 entry_i = i
@@ -253,15 +280,15 @@ def run(
                     if stop_hit_e:
                         exit_px_e = stop_px - s * slip
                         exit_reason_e = "stop"
-                        exit_slip_usd = _slippage_points(bool(edge[i]), cfg) * ES_POINT_VALUE
+                        exit_slip_usd = _slippage_points(bool(edge[i]), cfg, tk_sz) * pt_val * contracts
                     else:
                         exit_px_e = target_px
                         exit_reason_e = "target"
                         exit_slip_usd = 0.0
                     gross_pts = s * (exit_px_e - entry_px)
-                    gross_usd = gross_pts * ES_POINT_VALUE
-                    commission_usd = 2 * cfg.cost.commission_per_side
-                    entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg) * ES_POINT_VALUE
+                    gross_usd = gross_pts * pt_val * contracts
+                    commission_usd = 2 * cfg.cost.commission_per_side * contracts
+                    entry_slip_usd = _slippage_points(bool(edge[entry_i]), cfg, tk_sz) * pt_val * contracts
                     friction_total_usd = commission_usd + entry_slip_usd + exit_slip_usd
                     net_usd = gross_usd - commission_usd
                     entry_fill_ts = idx[entry_i] - bar_width
@@ -270,6 +297,7 @@ def run(
                         Trade(
                             strategy=strategy_name,
                             side=side,
+                            contracts=contracts,
                             entry_time=entry_fill_ts,
                             entry_px=float(entry_px),
                             exit_time=exit_fill_ts,

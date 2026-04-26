@@ -251,27 +251,81 @@ class StrategyRunner:
             log.warning("ATR invalid, skipping entry")
             return
         close_px = float(last["close"])
+        
+        from cheese.config import INSTRUMENTS
+        inst = INSTRUMENTS.get(self.s.symbol_root, INSTRUMENTS["ES"])
+        
         if last_sig == 1:
-            stop = round_to_tick(close_px - self.s.stop_atr_mult * atr)
-            tgt = round_to_tick(close_px + self.s.target_atr_mult * atr)
+            stop = round_to_tick(close_px - self.s.stop_atr_mult * atr, inst.tick_size)
+            tgt = round_to_tick(close_px + self.s.target_atr_mult * atr, inst.tick_size)
             side = "Buy"
         else:
-            stop = round_to_tick(close_px + self.s.stop_atr_mult * atr)
-            tgt = round_to_tick(close_px - self.s.target_atr_mult * atr)
+            stop = round_to_tick(close_px + self.s.stop_atr_mult * atr, inst.tick_size)
+            tgt = round_to_tick(close_px - self.s.target_atr_mult * atr, inst.tick_size)
             side = "Sell"
 
-        log.warning(f"SIGNAL {side} {self.s.quantity} @ ~{close_px:.2f} "
+        qty = self.s.quantity
+        if self.s.sizing_mode == "kelly":
+            try:
+                from cheese import backtest
+                from cheese.config import BacktestConfig, CostModel, ExitConfig
+                cfg = BacktestConfig(
+                    bar_freq=self.s.bar_freq,
+                    instrument=self.s.symbol_root,
+                    sizing_mode="kelly",
+                    account_size=self.s.account_size,
+                    kelly_fraction=self.s.kelly_fraction,
+                    cost=CostModel(),
+                    exits=ExitConfig(
+                        stop_atr_mult=self.s.stop_atr_mult,
+                        target_atr_mult=self.s.target_atr_mult,
+                        time_stop_min=self.s.time_stop_min
+                    )
+                )
+                # Run the backtester over the last ~5 days of warmed cache to compute Kelly
+                sim_sig = self._strategy.signals(feat)
+                tr_df, _ = backtest.run(feat, sim_sig, "flow_burst", cfg)
+                
+                if not tr_df.empty:
+                    net_pnls = tr_df["net_dollars"].tolist()
+                    wins = [x for x in net_pnls if x > 0]
+                    losses = [x for x in net_pnls if x <= 0]
+                    
+                    if len(net_pnls) >= 5 and wins and losses:
+                        win_rate = len(wins) / len(net_pnls)
+                        avg_win = sum(wins) / len(wins)
+                        avg_loss = abs(sum(losses) / len(losses))
+                        R = avg_win / avg_loss
+                        k = win_rate - ((1 - win_rate) / R)
+                        k = max(0.0, min(k, 1.0))
+                        
+                        fractional_k = k * self.s.kelly_fraction
+                        if fractional_k > 0:
+                            risk_usd = self.s.stop_atr_mult * atr * inst.point_value
+                            current_eq = self.s.account_size + sum(net_pnls)
+                            if current_eq > 0 and risk_usd > 0:
+                                qty = max(1, int((current_eq * fractional_k) / risk_usd))
+                    else:
+                        log.warning("Not enough simulated trades (min 5) to compute Kelly, defaulting to 1")
+                        qty = 1
+                else:
+                    qty = 1
+            except Exception as e:
+                log.error(f"Kelly computation failed, defaulting to static: {e!r}")
+                qty = self.s.quantity
+
+        log.warning(f"SIGNAL {side} {qty} @ ~{close_px:.2f} "
                     f"stop={stop:.2f} tgt={tgt:.2f} atr={atr:.2f}")
         self._last_signal_time = time.time()
         self._position = PositionState(side=last_sig, entry_time=time.time(),
                                        entry_px=close_px, stop_px=stop, target_px=tgt,
-                                       qty=self.s.quantity, submitted=True)
+                                       qty=qty, submitted=True)
         BUS.publish_nowait("signal", {
             "ts": last.name.isoformat(), "side": last_sig, "armed": True,
-            "entry_px": close_px, "stop_px": stop, "target_px": tgt, "atr": atr,
+            "entry_px": close_px, "stop_px": stop, "target_px": tgt, "atr": atr, "qty": qty
         })
         try:
-            await self.tv.place_bracket_market(self.contract, side, self.s.quantity, stop, tgt)
+            await self.tv.place_bracket_market(self.contract, side, qty, stop, tgt)
         except Exception as e:  # noqa: BLE001
             log.error(f"order submission failed: {e!r}")
             self._position = PositionState()  # reset; no exposure

@@ -68,6 +68,9 @@ class LiveSettings:
     env: Literal["demo", "live"] = "demo"
     dry_run: bool = True
     symbol_root: str = "ES"
+    sizing_mode: str = "static"
+    account_size: float = 100000.0
+    kelly_fraction: float = 1.0
     quantity: int = 1
     bar_freq: str = "5min"
     z_threshold: float = 2.0
@@ -142,7 +145,10 @@ def load() -> LiveSettings:
     return LiveSettings(
         env=env_val,                           # type: ignore[arg-type]
         dry_run=_bool(os.getenv("LIVE_DRY_RUN"), True),
-        symbol_root=os.getenv("LIVE_SYMBOL_ROOT", "ES"),
+        symbol_root=os.getenv("LIVE_INSTRUMENT", os.getenv("LIVE_SYMBOL_ROOT", "ES")),
+        sizing_mode=os.getenv("LIVE_SIZING_MODE", "static"),
+        account_size=_float(os.getenv("LIVE_ACCOUNT_SIZE"), 100000.0),
+        kelly_fraction=_float(os.getenv("LIVE_KELLY_FRACTION"), 1.0),
         quantity=_int(os.getenv("LIVE_QUANTITY"), 1),
         bar_freq=os.getenv("LIVE_BAR_FREQ", "5min"),
         z_threshold=_float(os.getenv("LIVE_Z_THRESHOLD"), 2.0),

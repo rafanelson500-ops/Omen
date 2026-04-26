@@ -10,6 +10,7 @@ from datetime import date, time
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -56,9 +57,10 @@ def _build_feat(mkt_key: str, gex_key: str, mkt: pd.DataFrame, gx: pd.DataFrame)
 
 
 @st.cache_data(show_spinner=False)
-def _run_buy_hold_baseline(mkt: pd.DataFrame, commission: float, slip_ticks: float) -> tuple[pd.DataFrame, pd.Series]:
-    from cheese.config import ES_POINT_VALUE, ES_TICK_SIZE
-    slip_pts = slip_ticks * ES_TICK_SIZE
+def _run_buy_hold_baseline(mkt: pd.DataFrame, commission: float, slip_ticks: float, instrument: str = "ES", static_quantity: int = 1) -> tuple[pd.DataFrame, pd.Series]:
+    from cheese.config import INSTRUMENTS
+    inst = INSTRUMENTS.get(instrument, INSTRUMENTS["ES"])
+    slip_pts = slip_ticks * inst.tick_size
     
     trades = []
     daily_times = []
@@ -74,15 +76,16 @@ def _run_buy_hold_baseline(mkt: pd.DataFrame, commission: float, slip_ticks: flo
         exit_px = float(last_bar["close"] - slip_pts)
         
         pts = exit_px - entry_px
-        gross_usd = pts * ES_POINT_VALUE
-        commission_usd = 2 * commission
+        gross_usd = pts * inst.point_value * static_quantity
+        commission_usd = 2 * commission * static_quantity
         # Friction is commission + 2 * slippage cost
-        friction_total_usd = commission_usd + 2 * slip_pts * ES_POINT_VALUE
+        friction_total_usd = commission_usd + 2 * slip_pts * inst.point_value * static_quantity
         net_usd = gross_usd - commission_usd
         
         trades.append({
             "strategy": "buy_hold",
             "side": 1,
+            "contracts": static_quantity,
             "entry_time": df_day.index[0],
             "entry_px": entry_px,
             "exit_time": df_day.index[-1],
@@ -104,7 +107,7 @@ def _run_buy_hold_baseline(mkt: pd.DataFrame, commission: float, slip_ticks: flo
     trades_df = pd.DataFrame(trades)
     if trades_df.empty:
         trades_df = pd.DataFrame(columns=[
-            "strategy", "side", "entry_time", "entry_px", "exit_time", "exit_px",
+            "strategy", "side", "contracts", "entry_time", "entry_px", "exit_time", "exit_px",
             "exit_reason", "bars_held", "stop_px", "target_px", "atr_at_entry",
             "gamma_regime", "gross_points", "gross_dollars", "cost_dollars", "net_dollars"
         ])
@@ -120,6 +123,8 @@ def _run_strategy(
     cost_commission: float, cost_slip_ticks: float,
     stop_mult: float, tgt_mult: float, trail_r: float, time_min: int,
     trade_start_time: time | None = None,
+    instrument: str = "ES", sizing_mode: str = "static", static_quantity: int = 1,
+    account_size: float = 100000.0, kelly_fraction: float = 1.0,
 ) -> tuple[pd.DataFrame, pd.Series]:
     strat = strategy.ALL_STRATEGIES[strat_name](**params)
     sig = strat.signals(feat)
@@ -130,6 +135,11 @@ def _run_strategy(
 
     cfg = BacktestConfig(
         bar_freq=freq,
+        instrument=instrument,
+        sizing_mode=sizing_mode,
+        static_quantity=static_quantity,
+        account_size=account_size,
+        kelly_fraction=kelly_fraction,
         cost=CostModel(commission_per_side=cost_commission,
                        slippage_ticks_per_side=cost_slip_ticks),
         exits=ExitConfig(stop_atr_mult=stop_mult, target_atr_mult=tgt_mult,
@@ -195,6 +205,20 @@ st.sidebar.header("Trading Window")
 trade_start_time = st.sidebar.time_input("start time (ET)", value=time(9, 30))
 
 st.sidebar.markdown("---")
+st.sidebar.header("Instrument & Sizing")
+instrument = st.sidebar.radio("instrument", ["ES", "MES"], index=0, horizontal=True)
+
+sizing_mode = st.sidebar.radio("sizing mode", ["static", "kelly"], index=0, horizontal=True)
+if sizing_mode == "kelly":
+    account_size = st.sidebar.number_input("account size ($)", 1000.0, 1000000.0, 100000.0, 5000.0)
+    kelly_fraction = st.sidebar.slider("kelly fraction", 0.05, 1.0, 0.25, 0.05)
+    static_quantity = 1
+else:
+    static_quantity = st.sidebar.number_input("lot size (contracts)", 1, 100, 1, 1)
+    account_size = 100000.0
+    kelly_fraction = 1.0
+
+st.sidebar.markdown("---")
 st.sidebar.header("Risk / Exits")
 stop_mult = st.sidebar.slider("stop ATR mult", 0.5, 4.0, 1.0, 0.1)
 tgt_mult = st.sidebar.slider("target ATR mult", 0.5, 8.0, 6.0, 0.1)
@@ -203,7 +227,8 @@ time_min = st.sidebar.slider("time stop (minutes)", 5, 180, 25, 5)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Costs")
-commission = st.sidebar.number_input("commission per side ($)", 0.0, 10.0, 2.50, 0.1)
+default_comm = 2.50 if instrument == "ES" else 0.65
+commission = st.sidebar.number_input("commission per side ($)", 0.0, 10.0, default_comm, 0.05)
 slip_ticks = st.sidebar.number_input("slippage per side (ticks)", 0.0, 4.0, 0.5, 0.25)
 
 # ---------- Load data ------------------------------------------------------
@@ -256,20 +281,20 @@ with st.spinner("running backtests..."):
         trades, equity = _run_strategy(
             s_name, _params(s_name), feat_key, feat, freq,
             commission, slip_ticks, stop_mult, tgt_mult, trail_r, int(time_min),
-            trade_start_time,
+            trade_start_time, instrument, sizing_mode, static_quantity, account_size, kelly_fraction,
         )
         summ = metrics.summarize(trades, equity)
         results[s_name] = (trades, equity, summ)
 
     # Always include intraday buy & hold baseline
-    bh_trades, bh_equity = _run_buy_hold_baseline(mkt, commission, slip_ticks)
+    bh_trades, bh_equity = _run_buy_hold_baseline(mkt, commission, slip_ticks, instrument=instrument, static_quantity=static_quantity)
     bh_summ = metrics.summarize(bh_trades, bh_equity)
     results["buy_hold"] = (bh_trades, bh_equity, bh_summ)
 
 
 # ---------- Overview tab ---------------------------------------------------
-tab_overview, tab_detail, tab_features, tab_trades = st.tabs(
-    ["Overview", "Per-Strategy", "Features", "Trades"]
+tab_overview, tab_detail, tab_features, tab_robustness, tab_trades = st.tabs(
+    ["Overview", "Per-Strategy", "Features", "Monte Carlo / Prop Firm", "Trades"]
 )
 
 with tab_overview:
@@ -295,6 +320,7 @@ with tab_overview:
             "total_pnl": "${:,.0f}", "total_cost": "${:,.0f}",
             "sharpe_daily": "{:,.2f}", "max_drawdown": "${:,.0f}",
             "avg_bars_held": "{:,.1f}", "ann_pnl_est": "${:,.0f}",
+            "mc_drawdown_95": "${:,.0f}", "p_value": "{:.3f}",
         }),
         use_container_width=True,
     )
@@ -313,6 +339,14 @@ with tab_detail:
         c3.metric("expectancy", f"${summ['expectancy']:,.2f}")
         c4.metric("total P&L", f"${summ['total_pnl']:,.0f}")
         c5.metric("max DD", f"${summ['max_drawdown']:,.0f}")
+
+        st.markdown("---")
+        st.subheader(f"Robustness: {summ.get('robustness_label', 'Unknown')}")
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Monte Carlo 95% DD", f"${summ.get('mc_drawdown_95', 0):,.0f}")
+        r2.metric("Permutation p-value", f"{summ.get('p_value', 1.0):.3f}")
+        r3.metric("Label", summ.get("robustness_label", "Unknown"))
+        st.markdown("---")
 
         if equity.empty or trades.empty:
             st.info("no trades.")
@@ -367,6 +401,172 @@ with tab_features:
                     fig.add_trace(go.Scatter(x=s.index, y=s[col], name=col, line=dict(dash="dot", color=color)))
             fig.update_layout(height=480, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
+
+
+with tab_robustness:
+    if not results:
+        st.info("run at least one strategy")
+    else:
+        # Filter out buy_hold from selection (no point bootstrapping a baseline)
+        strat_choices = [k for k in results.keys() if k != "buy_hold"]
+        if not strat_choices:
+            st.info("no strategy results available")
+        else:
+            chosen = st.selectbox(
+                "strategy to bootstrap",
+                strat_choices,
+                format_func=lambda k: STRAT_DISPLAY.get(k, k),
+                key="bootstrap_strategy",
+            )
+            chosen_trades, _, _ = results[chosen]
+
+            if chosen_trades.empty or len(chosen_trades) < 10:
+                st.warning("need at least 10 trades to run a meaningful bootstrap.")
+            else:
+                # ----- Settings -----
+                st.markdown("### Settings")
+                s1, s2, s3 = st.columns(3)
+                n_iter = s1.number_input("iterations", 200, 20000, 2000, 200,
+                                         help="More iterations = smoother distributions but slower.")
+                n_days_total = chosen_trades["entry_time"].apply(lambda t: t.date()).nunique()
+                n_days_sim = s2.number_input(
+                    "trading days per simulation", 1, 500, int(n_days_total), 1,
+                    help=f"How many trading days each simulated equity path covers. Default = backtest length ({n_days_total}).",
+                )
+                show_paths = s3.number_input("sample paths to plot", 10, 500, 100, 10)
+
+                # ----- Run bootstrap -----
+                with st.spinner("running daily-block bootstrap..."):
+                    bs = metrics.daily_block_bootstrap(
+                        chosen_trades, n_iter=int(n_iter), n_days=int(n_days_sim),
+                    )
+
+                # ----- Distribution metrics -----
+                st.markdown("---")
+                st.subheader("Distribution of outcomes")
+                fr = bs["final_returns"]
+                dd = bs["max_drawdowns"]
+                ev = bs["ev_per_trade"]
+
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric("median return", f"${np.median(fr):,.0f}",
+                          delta=f"P(profit) = {(fr > 0).mean():.1%}")
+                d2.metric("5th pct return", f"${np.percentile(fr, 5):,.0f}")
+                d3.metric("median max DD", f"${np.median(dd):,.0f}")
+                d4.metric("5th pct max DD", f"${np.percentile(dd, 5):,.0f}",
+                          help="Worst 5% (most negative) drawdown across all simulations.")
+
+                hist_fig = make_subplots(rows=1, cols=3,
+                                         subplot_titles=("Final Return $", "Max Drawdown $", "EV / trade $"))
+                hist_fig.add_trace(go.Histogram(x=fr, nbinsx=60, name="return",
+                                                marker_color="seagreen"), row=1, col=1)
+                hist_fig.add_trace(go.Histogram(x=dd, nbinsx=60, name="dd",
+                                                marker_color="crimson"), row=1, col=2)
+                hist_fig.add_trace(go.Histogram(x=ev, nbinsx=60, name="ev",
+                                                marker_color="royalblue"), row=1, col=3)
+                hist_fig.update_layout(height=320, showlegend=False,
+                                       margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(hist_fig, use_container_width=True)
+
+                # ----- Spaghetti chart -----
+                st.markdown("---")
+                st.subheader("Sample equity paths (daily-block bootstrap)")
+                tp = bs["trade_paths"]
+                k = min(int(show_paths), tp.shape[0])
+                rng = np.random.default_rng(0)
+                idx_sample = rng.choice(tp.shape[0], size=k, replace=False)
+                spaghetti = go.Figure()
+                for i in idx_sample:
+                    p = tp[i]
+                    spaghetti.add_trace(go.Scatter(
+                        y=p, mode="lines", showlegend=False,
+                        line=dict(width=1, color="rgba(80,120,200,0.18)"),
+                        hoverinfo="skip",
+                    ))
+                # overlay median
+                med = np.nanmedian(tp, axis=0)
+                spaghetti.add_trace(go.Scatter(y=med, mode="lines", name="median path",
+                                               line=dict(color="black", width=2.5)))
+                spaghetti.update_layout(height=420, margin=dict(l=0, r=0, t=10, b=0),
+                                        xaxis_title="trade #", yaxis_title="$ cumulative")
+                st.plotly_chart(spaghetti, use_container_width=True)
+
+                # ----- Prop Firm Simulator -----
+                st.markdown("---")
+                st.header("Prop Firm Challenge Simulator")
+                st.caption(
+                    "Double-barrier simulation. Each draw is a daily-block bootstrap path "
+                    "walked trade-by-trade. The first barrier touched determines the outcome. "
+                    "Lower barrier trails the high-water mark upward indefinitely."
+                )
+
+                pf1, pf2, pf3, pf4 = st.columns(4)
+                profit_target = pf1.number_input("profit target ($)", 100.0, 100000.0, 3000.0, 100.0)
+                drawdown_limit = pf2.number_input("trailing DD limit ($)", 100.0, 50000.0, 2500.0, 100.0)
+                pf_iter = pf3.number_input("simulations", 200, 20000, 2000, 200, key="pf_iter")
+                pf_days = pf4.number_input("max days per challenge", 1, 500, int(n_days_total), 1, key="pf_days")
+                trailing_mode = st.radio(
+                    "drawdown mode",
+                    ["eod", "instant", "static"],
+                    index=0,
+                    horizontal=True,
+                    help="eod: Topstep-style EOD trailing. instant: trails every trade. static: no trailing, fixed at -DD.",
+                )
+
+                with st.spinner("simulating prop firm challenges..."):
+                    pf = metrics.prop_firm_simulation(
+                        chosen_trades,
+                        profit_target=float(profit_target),
+                        drawdown_limit=float(drawdown_limit),
+                        trailing_mode=str(trailing_mode),
+                        n_iter=int(pf_iter),
+                        n_days=int(pf_days),
+                    )
+
+                p1, p2, p3, p4 = st.columns(4)
+                p1.metric("Pass rate", f"{pf['pass_rate']:.1%}",
+                          delta=f"{pf['outcomes']['pass']} sims")
+                p2.metric("Fail rate", f"{pf['fail_rate']:.1%}",
+                          delta=f"{pf['outcomes']['fail']} sims",
+                          delta_color="inverse")
+                p3.metric("Timeout", f"{pf['timeout_rate']:.1%}",
+                          delta=f"{pf['outcomes']['timeout']} sims")
+                p4.metric("Median days to outcome", f"{pf['median_days_to_outcome']:.0f}")
+
+                # Outcome label
+                pr = pf["pass_rate"]
+                if pr >= 0.7:
+                    lbl = "Highly Viable"
+                elif pr >= 0.5:
+                    lbl = "Promising"
+                elif pr >= 0.3:
+                    lbl = "Risky"
+                elif pr >= 0.1:
+                    lbl = "Low Edge"
+                else:
+                    lbl = "Not Viable"
+                st.subheader(f"Verdict: {lbl}")
+
+                # Spaghetti of prop firm paths (color by outcome)
+                if pf["sample_paths"]:
+                    pf_fig = go.Figure()
+                    color_map = {"pass": "rgba(40,170,90,0.25)",
+                                 "fail": "rgba(220,50,60,0.25)",
+                                 "timeout": "rgba(150,150,150,0.18)"}
+                    for path, oc in zip(pf["sample_paths"], pf["sample_outcomes"]):
+                        pf_fig.add_trace(go.Scatter(
+                            y=path, mode="lines", showlegend=False,
+                            line=dict(width=1, color=color_map[oc]),
+                            hoverinfo="skip",
+                        ))
+                    pf_fig.add_hline(y=profit_target, line=dict(color="green", dash="dash"),
+                                     annotation_text="profit target")
+                    pf_fig.add_hline(y=-drawdown_limit, line=dict(color="red", dash="dash"),
+                                     annotation_text="initial DD limit")
+                    pf_fig.update_layout(height=460, margin=dict(l=0, r=0, t=10, b=0),
+                                         xaxis_title="trade #", yaxis_title="$ equity",
+                                         title="Prop firm sample paths (green=pass, red=fail, gray=timeout)")
+                    st.plotly_chart(pf_fig, use_container_width=True)
 
 
 with tab_trades:

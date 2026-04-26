@@ -41,6 +41,18 @@ def round_to_tick(price: float, tick: float = ES_TICK_SIZE) -> float:
 RTH_OPEN = "09:30"
 RTH_CLOSE = "16:00"
 
+@dataclass(frozen=True)
+class Instrument:
+    name: str
+    tick_size: float
+    tick_value: float
+    point_value: float
+
+INSTRUMENTS = {
+    "ES": Instrument("ES", 0.25, 12.50, 50.0),
+    "MES": Instrument("MES", 0.25, 1.25, 5.0),
+}
+
 
 @dataclass(frozen=True)
 class CostModel:
@@ -76,6 +88,11 @@ class BacktestConfig:
     bar_freq: str = "1min"             # 1min or 5min
     feature_lookback_bars: int = 60    # for z-scores, ATR warmup, etc.
     max_concurrent_positions: int = 1  # no pyramiding
+    instrument: str = "ES"             # "ES" or "MES"
+    sizing_mode: str = "static"        # "static" or "kelly"
+    static_quantity: int = 1           # lot size when sizing_mode="static"
+    account_size: float = 100000.0     # starting capital for dynamic sizing
+    kelly_fraction: float = 1.0        # Kelly fraction multiplier
     cost: CostModel = field(default_factory=CostModel)
     exits: ExitConfig = field(default_factory=ExitConfig)
 
@@ -84,6 +101,7 @@ __all__ = [
     "BACKEND_ROOT", "DATA_DIR", "GEX_CACHE", "MARKET_CACHE",
     "ET", "UTC",
     "DATABENTO_DATASET", "ES_CONTINUOUS_SYMBOL",
+    "Instrument", "INSTRUMENTS",
     "ES_TICK_SIZE", "ES_TICK_VALUE", "ES_POINT_VALUE", "round_to_tick",
     "RTH_OPEN", "RTH_CLOSE",
     "CostModel", "ExitConfig", "BacktestConfig",

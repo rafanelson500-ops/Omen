@@ -76,7 +76,7 @@ def _int_env(name: str, default: int) -> int:
 GEX_POLL_INTERVAL_S = _int_env("DAEMON_GEX_POLL_S", 1)
 GEX_FLUSH_INTERVAL_S = _int_env("DAEMON_GEX_FLUSH_S", 10)
 ES_FLUSH_INTERVAL_S = _int_env("DAEMON_ES_FLUSH_S", 10)
-RETENTION_DAYS = _int_env("DAEMON_RETENTION_DAYS", 5)
+RETENTION_DAYS = _int_env("DAEMON_RETENTION_DAYS", 120)
 
 GEXBOT_LIVE_URL = "https://api.gexbot.com/ES_SPX/orderflow/orderflow"
 GEXBOT_USER_AGENT = "cheese-trading-daemon/1.0"
