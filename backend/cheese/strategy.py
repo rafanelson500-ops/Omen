@@ -132,6 +132,43 @@ class RandomStrategy:
 
 
 @dataclass
+class RandomEntryStrategy:
+    """Sham for diagnostic A/B vs FlowBurst: random +1/-1 entries on the
+    same set of eligible bars FlowBurst could in principle fire on, with
+    the same lunch blackout filter. Tests whether signal quality or exit
+    structure drives edge.
+
+    Eligibility mirrors FlowBurst's implicit gating: a bar is eligible iff
+    atr, gexoflow_z, and dexoflow_z are all finite (FlowBurst returns 0 on
+    NaN-warmup bars). 50/50 long/short split, fixed seed, single tunable
+    probability calibrated against the target trade count.
+    """
+    probability: float = 0.045
+    seed: int = 42
+    blackout_lunch: bool = False
+    name: str = "random_entry"
+
+    def signals(self, feat: pd.DataFrame) -> pd.Series:
+        s = _zero_series(feat)
+        if len(feat) == 0:
+            return s
+        eligible = pd.Series(True, index=feat.index)
+        for col in ("atr", "gexoflow_z", "dexoflow_z"):
+            if col in feat.columns:
+                eligible &= feat[col].notna()
+        if self.blackout_lunch:
+            mins = feat.index.hour * 60 + feat.index.minute
+            in_lunch = pd.Series((mins >= 10 * 60 + 30) & (mins < 12 * 60 + 30), index=feat.index)
+            eligible &= ~in_lunch
+        rng = np.random.default_rng(self.seed)
+        draws = rng.random(len(feat))
+        signs = rng.choice([-1, 1], size=len(feat)).astype("int8")
+        fire = eligible.values & (draws < self.probability)
+        s.loc[fire] = signs[fire]
+        return s
+
+
+@dataclass
 class BuyHoldStrategy:
     """Naive baseline: long at first RTH bar each session, exit at close."""
     name: str = "buy_hold"
@@ -150,5 +187,6 @@ ALL_STRATEGIES: dict[str, type] = {
     "wall_break": WallBreakStrategy,
     "regime_flip": RegimeFlipStrategy,
     "random": RandomStrategy,
+    "random_entry": RandomEntryStrategy,
     "buy_hold": BuyHoldStrategy,
 }

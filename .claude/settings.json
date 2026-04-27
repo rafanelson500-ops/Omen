@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python scripts/run_backtest.py --strategy flow_burst --freq 5min --days 80 --z-threshold 1.8)",
+      "Bash(tee /tmp/baseline_run.txt)",
+      "Read(//Users/rafanelson/**)",
+      "Bash(python3 -c \"import pandas, numpy, rich, requests, pandas_market_calendars; print\\('deps ok'\\)\")",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(/opt/homebrew/bin/python3.11 -c \"import pandas, numpy, rich, requests, pandas_market_calendars; print\\('deps ok'\\)\")",
+      "Bash(/opt/homebrew/bin/python3.11 scripts/run_backtest.py --strategy flow_burst --freq 5min --days 80 --z-threshold 1.8)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(/opt/homebrew/bin/python3.11 scripts/run_backtest.py --strategy flow_burst --freq 5min --start 2025-12-26 --end 2026-04-22 --z-threshold 1.8)",
+      "Bash(tee /tmp/baseline_pinned.txt)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp"
+    ]
+  }
+}

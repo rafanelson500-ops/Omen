@@ -34,7 +34,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--min-flow-z", type=float, default=1.0,
                    help="(wall_break) min |gexoflow_z| to confirm break")
     p.add_argument("--blackout-lunch", action="store_true",
-                   help="(flow_burst) block entries with signal bar in [10:30, 12:30) ET")
+                   help="(flow_burst, random_entry) block entries with signal bar in [10:30, 12:30) ET")
+    p.add_argument("--random-probability", type=float, default=0.045,
+                   help="(random_entry) per-bar probability of firing a signal")
+    p.add_argument("--random-seed", type=int, default=42,
+                   help="(random_entry) RNG seed for reproducibility")
     return p.parse_args()
 
 
@@ -65,6 +69,10 @@ def main() -> None:
         kwargs["blackout_lunch"] = args.blackout_lunch
     elif args.strategy == "wall_break":
         kwargs["min_flow_z"] = args.min_flow_z
+    elif args.strategy == "random_entry":
+        kwargs["probability"] = args.random_probability
+        kwargs["seed"] = args.random_seed
+        kwargs["blackout_lunch"] = args.blackout_lunch
     strat = strat_cls(**kwargs)
 
     signals = strat.signals(feat)
