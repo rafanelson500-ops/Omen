@@ -76,17 +76,17 @@ class CostModel:
 class ExitConfig:
     """ATR-based stop/target with trailing + time cap."""
     atr_window_bars: int = 14
-    stop_atr_mult: float = 1.5
-    target_atr_mult: float = 2.5
-    trail_after_r: float = 1.0         # once price is 1R in favor, ratchet stop to breakeven
-    time_stop_min: int = 30            # hard close after N minutes in position
+    stop_atr_mult: float = 2.0
+    target_atr_mult: float = 4.5
+    trail_after_r: float = 0         # once price is 1R in favor, ratchet stop to breakeven
+    time_stop_min: int = 25            # hard close after N minutes in position
     close_at_rth_end: bool = True      # force flat at 15:55 ET
 
 
 @dataclass(frozen=True)
 class BacktestConfig:
     bar_freq: str = "1min"             # 1min or 5min
-    feature_lookback_bars: int = 60    # for z-scores, ATR warmup, etc.
+    feature_lookback_bars: int = 20    # for z-scores, ATR warmup, etc.
     max_concurrent_positions: int = 1  # no pyramiding
     instrument: str = "ES"             # "ES" or "MES"
     sizing_mode: str = "static"        # "static" or "kelly"
