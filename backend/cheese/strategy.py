@@ -43,6 +43,7 @@ class FlowBurstStrategy:
     Symmetric short on the other side. Only fires when gamma_regime available.
     """
     z_threshold: float = 2.0
+    blackout_lunch: bool = False
     name: str = "flow_burst"
 
     def signals(self, feat: pd.DataFrame) -> pd.Series:
@@ -52,6 +53,11 @@ class FlowBurstStrategy:
         gz, dz = feat["gexoflow_z"], feat["dexoflow_z"]
         long_ = (gz > self.z_threshold) & (dz > 0)
         short_ = (gz < -self.z_threshold) & (dz < 0)
+        if self.blackout_lunch:
+            mins = feat.index.hour * 60 + feat.index.minute
+            in_lunch = pd.Series((mins >= 10 * 60 + 30) & (mins < 12 * 60 + 30), index=feat.index)
+            long_ = long_ & ~in_lunch
+            short_ = short_ & ~in_lunch
         s.loc[long_.fillna(False)] = 1
         s.loc[short_.fillna(False)] = -1
         return s

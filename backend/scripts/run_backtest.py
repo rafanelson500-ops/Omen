@@ -33,6 +33,8 @@ def _parse_args() -> argparse.Namespace:
                    help="(flow_burst) z-score threshold for entries")
     p.add_argument("--min-flow-z", type=float, default=1.0,
                    help="(wall_break) min |gexoflow_z| to confirm break")
+    p.add_argument("--blackout-lunch", action="store_true",
+                   help="(flow_burst) block entries with signal bar in [10:30, 12:30) ET")
     return p.parse_args()
 
 
@@ -60,6 +62,7 @@ def main() -> None:
     kwargs = {}
     if args.strategy == "flow_burst":
         kwargs["z_threshold"] = args.z_threshold
+        kwargs["blackout_lunch"] = args.blackout_lunch
     elif args.strategy == "wall_break":
         kwargs["min_flow_z"] = args.min_flow_z
     strat = strat_cls(**kwargs)
