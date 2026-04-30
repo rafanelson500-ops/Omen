@@ -7,3 +7,13 @@ __pycache__/
 *.ipynb_checkpoints/
 .DS_Store
 .claude/settings.local.json
+
+# Secrets — never commit
+.env
+**/.env
+*.env.local
+
+# Scratch/curl files — common leak vector
+test.sh
+scratch.sh
+*.scratch.sh
