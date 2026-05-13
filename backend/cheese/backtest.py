@@ -122,6 +122,20 @@ def run(
     # the forced session_close flatten steps on top of it.
     max_bars_per_trade = _bars_for_minutes(cfg.exits.time_stop_min, cfg.bar_freq)
     min_bars_runway = max_bars_per_trade + 1
+    # Time-stop trigger threshold. Because exits fill at the NEXT bar's open
+    # (a one-bar-width step forward in wall-clock), the trigger must fire
+    # one bar EARLIER than the naive "bars elapsed >= max_bars" check, or
+    # the realised duration overshoots time_stop_min by exactly one bar.
+    # Concretely: time_stop_min=25 with 5min bars => max_bars=5. We want the
+    # exit fill to land at o[entry_i + 5] (= entry_open + 25min), which
+    # means triggering at iteration entry_i + 4 (bars_in == 4). Using
+    # `bars_in >= max_bars` instead would trigger at entry_i + 5 and fill
+    # at o[entry_i + 6] => 30min realised, which silently breaks
+    # backtest <-> live alignment (the live runner uses wall-clock
+    # (now - entry_time) >= time_stop_min, which IS exact).
+    # Floored at 1 so degenerate max_bars=1 configs still hold for at least
+    # one bar of feedback (full sub-bar exit semantics aren't supported).
+    time_stop_trigger = max(1, max_bars_per_trade - 1)
     # bars_left[i] = number of bars in the same calendar session with label >= idx[i]
     dates_arr = np.array([ts.date() for ts in idx])
     bars_left = np.zeros(n, dtype=np.int64)
@@ -131,6 +145,24 @@ def run(
         else:
             bars_left[k] = bars_left[k + 1] + 1
     for i in range(n):
+        # When an exit fires at iteration i, we must NOT also enter a new
+        # trade in the same iteration. The entry block below uses
+        # sig_arr[i - 1] and fills at o[i] (wall-clock idx[i] - bar_width),
+        # which is BEFORE the just-resolved exit:
+        #   * time / session_close exits fill at o[i + 1] = idx[i]      (≥ o[i])
+        #   * stop / target exits fill at stop_px/target_px mid-bar i   (≥ o[i])
+        # Allowing the paired same-iteration entry produces a trade whose
+        # entry_time predates the prior trade's exit_time -- the textbook
+        # overlap visible in the user's 2026-05-11 export (trade #1 enters
+        # at 17:15 while trade #0 is still open until 17:20). Live cannot
+        # produce that: at the bar boundary it (a) detects/awaits the exit
+        # webhook, then (b) evaluates sig of the just-closed bar, and (c)
+        # fires the new entry at the boundary, not one bar earlier.
+        # Skipping the entry block here defers the new entry to iteration
+        # i + 1, where `sig_arr[i]` is the signal of the bar that just
+        # closed and `o[i + 1]` is the same wall-clock instant the live
+        # runner ticks at -- byte-for-byte aligned.
+        exit_occurred = False
         if in_pos:
             bars_in += 1
             bar_high, bar_low = h[i], l[i]
@@ -158,8 +190,11 @@ def run(
                 exit_px = target_px       # limit fill, no slippage
                 exit_reason = "target"
 
-            # time cap (measured in bars; assumes uniform bar freq)
-            if exit_reason is None and bars_in >= _bars_for_minutes(cfg.exits.time_stop_min, cfg.bar_freq):
+            # time cap (measured in bars; assumes uniform bar freq).
+            # See `time_stop_trigger` comment above for the off-by-one
+            # rationale (we trigger one bar early because the fill lands
+            # at next-bar-open).
+            if exit_reason is None and bars_in >= time_stop_trigger:
                 slip = slip_edge if edge[i] else slip_normal
                 # exit at next bar open; but we're evaluating at bar i, so exit at o[i+1] if available else c[i]
                 if i + 1 < n:
@@ -226,9 +261,12 @@ def run(
                 side = 0
                 trail_armed = False
                 bars_in = 0
+                exit_occurred = True
 
-        # entry on signal from PREVIOUS bar (i-1) -> enter at this bar's open
-        if not in_pos and i > 0 and sig_arr[i - 1] != 0:
+        # entry on signal from PREVIOUS bar (i-1) -> enter at this bar's open.
+        # `exit_occurred` blocks entries on iterations where a prior trade
+        # just exited; see the comment at the top of the loop for why.
+        if not exit_occurred and not in_pos and i > 0 and sig_arr[i - 1] != 0:
             s = int(sig_arr[i - 1])
             a = atr[i - 1]
             # end-of-session gate: need max_bars + 1 bars of runway (incl. this one)
