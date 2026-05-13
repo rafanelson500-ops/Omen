@@ -228,4 +228,4 @@ for prioritization if multiple hypotheses get forward-tested.
 ## Sign-off
 
 User verbal sign-off: given in chat session May 12-13, 2026.
-Commit hash: [FILL after git commit]
+Commit hash: `6f8b32d533c266899c1092e3de3e744db36aced6` (short: `6f8b32d`)
