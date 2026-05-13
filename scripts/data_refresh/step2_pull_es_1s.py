@@ -41,8 +41,8 @@ SCHEMA = "ohlcv-1s"
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-START_SESSION = dt.date(2026, 4, 28)
-END_SESSION = dt.date(2026, 5, 11)
+START_SESSION = dt.date(2026, 5, 12)
+END_SESSION = dt.date(2026, 5, 12)
 
 
 def _load_api_key() -> str:

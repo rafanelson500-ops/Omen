@@ -46,17 +46,9 @@ UTC = ZoneInfo("UTC")
 RTH_OPEN_HM = (9, 30)
 RTH_CLOSE_HM = (16, 0)
 
-# Step 1 scope — 9 confirmed-available days. May 12 deferred (API processing lag).
+# May 12 pull
 TARGET_DATES = [
-    dt.date(2026, 4, 29),
-    dt.date(2026, 4, 30),
-    dt.date(2026, 5, 1),
-    dt.date(2026, 5, 4),
-    dt.date(2026, 5, 5),
-    dt.date(2026, 5, 6),
-    dt.date(2026, 5, 7),
-    dt.date(2026, 5, 8),
-    dt.date(2026, 5, 11),
+    dt.date(2026, 5, 12),
 ]
 
 
