@@ -194,4 +194,4 @@ forward results to the pre-fix numbers (5.38, 1.13, 2.79).
 ## Sign-off
 
 User verbal sign-off: given in chat session May 12-13, 2026.
-Commit hash of this document: [FILL after git commit]
+Commit hash of this document: `9c1c22f86391947d3c54612219b32da589233727` (short: `9c1c22f`)
