@@ -44,14 +44,36 @@ def build_features(
         broke_mput_dn           - bool, crossed zero_mput downward this bar
         gexoflow_z              - rolling z-score of gexoflow_sum
         dexoflow_z              - rolling z-score of dexoflow_sum
+
+    Session boundaries
+    ------------------
+    Every rolling / shift operation here is reset at the start of each RTH
+    session date. Without this, a multi-day historical backtest blends the
+    previous day's tail into today's first bars: the rolling gexoflow z-score
+    rolls into yesterday's distribution (inflated StdDev → suppressed sigmas),
+    ATR's first bars use yesterday's close as ``prev_close`` (overnight gap →
+    huge true-range), and crossing detectors fire on the first bar of day N
+    if it opens on the other side of yesterday's wall. The streamlit
+    "Single day (live cache)" mode and ``StrategyRunner._tick`` (with
+    ``since = now.normalize()``) never see those artefacts because their
+    input frame contains a single date. Resetting here makes
+    "Historical range" and live exactly equivalent to a stack of single-day
+    runs glued together.
     """
     df = mkt.join(align_gex_to_market(mkt, gex), how="left")
 
-    # ATR in points
+    # Session key for all rolling / shift resets below. ``df.index.date``
+    # gives one calendar date per bar; mkt is already RTH-only so each bar
+    # belongs unambiguously to one session.
+    sess = pd.Series(df.index.date, index=df.index, name="_session")
+
+    # ATR in points (per-session shift + per-session rolling mean)
     h, l, c = df["high"], df["low"], df["close"]
-    pc = c.shift(1)
+    pc = c.groupby(sess).shift(1)
     tr = pd.concat([(h - l), (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
-    df["atr"] = tr.rolling(14, min_periods=5).mean()
+    df["atr"] = tr.groupby(sess).transform(
+        lambda s: s.rolling(14, min_periods=5).mean()
+    )
     df["atr_pts"] = df["atr"]
 
     # Regime + distances (only where GEX is present)
@@ -62,7 +84,10 @@ def build_features(
         df["dist_zero_mput_pts"] = spot - df.get("zero_mput")
         df["dist_z_mlgamma_pts"] = spot - df.get("z_mlgamma")
 
-        prev_sign = np.sign(df["dist_z_mlgamma_pts"].shift(1))
+        # Crossing detectors use shift(1) -> reset at session start so the
+        # first bar of a session never registers as a "cross" relative to
+        # yesterday's close.
+        prev_sign = np.sign(df["dist_z_mlgamma_pts"].groupby(sess).shift(1))
         cur_sign = np.sign(df["dist_z_mlgamma_pts"])
         df["crossed_mlgamma_up"] = (prev_sign < 0) & (cur_sign >= 0)
         df["crossed_mlgamma_dn"] = (prev_sign > 0) & (cur_sign <= 0)
@@ -72,16 +97,27 @@ def build_features(
         df["touched_mcall"] = within(df["zero_mcall"]) if "zero_mcall" in df else False
         df["touched_mput"] = within(df["zero_mput"]) if "zero_mput" in df else False
 
-        # Breaks: close crossed the wall this bar
-        df["broke_mcall_up"] = (c.shift(1) <= df["zero_mcall"].shift(1)) & (c > df["zero_mcall"])
-        df["broke_mput_dn"] = (c.shift(1) >= df["zero_mput"].shift(1)) & (c < df["zero_mput"])
+        # Breaks: close crossed the wall this bar (per-session shift)
+        if "zero_mcall" in df:
+            c_prev = c.groupby(sess).shift(1)
+            mcall_prev = df["zero_mcall"].groupby(sess).shift(1)
+            df["broke_mcall_up"] = (c_prev <= mcall_prev) & (c > df["zero_mcall"])
+        if "zero_mput" in df:
+            c_prev = c.groupby(sess).shift(1)
+            mput_prev = df["zero_mput"].groupby(sess).shift(1)
+            df["broke_mput_dn"] = (c_prev >= mput_prev) & (c < df["zero_mput"])
 
-    # Flow z-scores
+    # Flow z-scores (per-session rolling)
     for col in ("gexoflow_sum", "dexoflow_sum", "cvroflow_sum"):
         if col not in df.columns:
             continue
-        mu = df[col].rolling(flow_z_window, min_periods=flow_z_window // 3).mean()
-        sd = df[col].rolling(flow_z_window, min_periods=flow_z_window // 3).std(ddof=0)
+        grp = df[col].groupby(sess)
+        mu = grp.transform(
+            lambda s: s.rolling(flow_z_window, min_periods=flow_z_window // 3).mean()
+        )
+        sd = grp.transform(
+            lambda s: s.rolling(flow_z_window, min_periods=flow_z_window // 3).std(ddof=0)
+        )
         df[col.replace("_sum", "_z")] = (df[col] - mu) / sd.replace(0, np.nan)
 
     return df
