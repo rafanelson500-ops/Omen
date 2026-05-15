@@ -1,0 +1,53 @@
+{
+  "label": "A_locked",
+  "is_start": "2025-12-26",
+  "is_end": "2026-04-22",
+  "n_sessions_in_range": 80,
+  "config": {
+    "z_threshold": 1.8,
+    "bar_freq": "5min",
+    "blackout_lunch": true
+  },
+  "headline": {
+    "trades": 268,
+    "total_pnl": 13028.75,
+    "win_rate": 0.503731343283582,
+    "mean_pnl": 48.61473880597015,
+    "avg_win": 443.3333333333333,
+    "avg_loss": -352.0394736842105,
+    "profit_factor": 1.278265744720613,
+    "sharpe_daily": 2.35061126060047,
+    "max_dd": -3638.75
+  },
+  "per_cell": [
+    {
+      "cell": "LONG_long",
+      "n": 73,
+      "total_pnl": 3178.75,
+      "win_rate": 0.4931506849315068
+    },
+    {
+      "cell": "LONG_short",
+      "n": 68,
+      "total_pnl": 5597.5,
+      "win_rate": 0.4852941176470588
+    },
+    {
+      "cell": "SHORT_long",
+      "n": 66,
+      "total_pnl": 7095.0,
+      "win_rate": 0.6212121212121212
+    },
+    {
+      "cell": "SHORT_short",
+      "n": 61,
+      "total_pnl": -2842.5,
+      "win_rate": 0.4098360655737705
+    }
+  ],
+  "exit_dist": {
+    "time": 207,
+    "stop": 50,
+    "target": 11
+  }
+}
