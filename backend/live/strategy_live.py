@@ -326,6 +326,49 @@ class StrategyRunner:
             "ts": last.name.isoformat(), "side": last_sig, "armed": True,
             "entry_px": close_px, "stop_px": stop, "target_px": tgt, "atr": atr, "qty": qty
         })
+
+        # Cell-level filter: suppress SHORT_long per user override
+        # (2026-05-15). cheese/ is unchanged so the pre-reg backtest
+        # still simulates all 4 cells for the daily diagnostic; only
+        # this live execution path filters the cell. gamma_regime is
+        # the canonical column from cheese/features.py:82
+        #   np.where(spot >= z_mlgamma, "long", "short")
+        # already attached to `feat` by features.build_features. Read
+        # is fail-open: any problem -> "unknown" -> trade allowed.
+        try:
+            gamma_regime = str(last.get("gamma_regime", "unknown"))
+            if gamma_regime in ("", "nan", "None", "?"):
+                gamma_regime = "unknown"
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"gamma_regime read failed: {e!r}; "
+                        f"defaulting to allow trade")
+            gamma_regime = "unknown"
+
+        is_short_long = (side == "Sell" and gamma_regime == "long")
+
+        if is_short_long:
+            log.warning(
+                f"SUPPRESSED SHORT_long signal: side={side} "
+                f"regime={gamma_regime} entry={close_px:.2f} "
+                f"stop={stop:.2f} tgt={tgt:.2f} atr={atr:.2f} qty={qty}"
+            )
+            BUS.publish_nowait("suppressed_signal", {
+                "ts": last.name.isoformat(),
+                "side": side,
+                "gamma_regime": gamma_regime,
+                "entry_px": close_px,
+                "stop_px": stop,
+                "target_px": tgt,
+                "atr": atr,
+                "qty": qty,
+                "cell": "SHORT_long",
+                "reason": "live_filter_user_override",
+            })
+            # Reset position state so subsequent ticks don't think
+            # we're in-position.
+            self._position = PositionState()
+            return  # skip order submission and webhook entirely
+
         try:
             await self.tv.place_bracket_market(
                 self.contract, side, qty, stop, tgt
