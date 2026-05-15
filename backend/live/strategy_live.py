@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+import httpx as _httpx
 import time
 from dataclasses import dataclass
 from datetime import time as dtime
@@ -325,10 +327,73 @@ class StrategyRunner:
             "entry_px": close_px, "stop_px": stop, "target_px": tgt, "atr": atr, "qty": qty
         })
         try:
-            await self.tv.place_bracket_market(self.contract, side, qty, stop, tgt)
+            await self.tv.place_bracket_market(
+                self.contract, side, qty, stop, tgt
+            )
+            # Mirror to TradersPost — fire-and-forget,
+            # never blocks or fails the main submission.
+            tp_action = "buy" if side == "Buy" else "sell"
+            tp_ticker = self.contract.get("name", "ES")
+            asyncio.create_task(
+                self._fire_traderspost_webhook(
+                    action=tp_action,
+                    ticker=tp_ticker,
+                    qty=qty,
+                    stop_px=stop,
+                    target_px=tgt,
+                )
+            )
         except Exception as e:  # noqa: BLE001
             log.error(f"order submission failed: {e!r}")
             self._position = PositionState()  # reset; no exposure
+
+    async def _fire_traderspost_webhook(
+        self,
+        action: str,
+        ticker: str,
+        qty: int,
+        stop_px: float | None = None,
+        target_px: float | None = None,
+    ) -> None:
+        """Mirror trade to TradersPost (prop eval account).
+        Failures are logged but NEVER propagate — main
+        Tradovate order is unaffected."""
+        url = (os.getenv("TRADERSPOST_WEBHOOK_URL", "") or "").strip().strip('"').strip("'")
+        if not url:
+            log.debug("TRADERSPOST_WEBHOOK_URL not set; skipping mirror")
+            return
+        # Strip Tradovate contract suffix to root symbol so
+        # TradersPost continuous-contract mapping resolves
+        # correctly (ESM6 -> ES, MESM6 -> MES).
+        root = ticker
+        for suffix in ("H6", "M6", "U6", "Z6", "H7", "M7", "U7", "Z7"):
+            if root.endswith(suffix):
+                root = root[:-2]
+                break
+        payload: dict = {
+            "ticker": root,
+            "action": action,
+            "quantity": int(qty),
+        }
+        if stop_px is not None:
+            payload["stopLoss"] = {"type": "stop", "stopPrice": round(float(stop_px), 2)}
+        if target_px is not None:
+            payload["takeProfit"] = {"limitPrice": round(float(target_px), 2)}
+        try:
+            async with _httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.post(url, json=payload)
+                if 200 <= r.status_code < 300:
+                    log.info(
+                        f"TradersPost mirror OK: {action} {qty} {root} "
+                        f"stop={stop_px} tgt={target_px} HTTP {r.status_code}"
+                    )
+                else:
+                    log.warning(
+                        f"TradersPost mirror non-2xx: HTTP {r.status_code} "
+                        f"body={r.text[:300]}"
+                    )
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"TradersPost mirror failed (non-fatal): {e!r}")
 
     def _publish_feature_warmup(
         self,
@@ -440,9 +505,23 @@ class StrategyRunner:
             return
         side_to_close = "Buy" if pos.side == 1 else "Sell"
         try:
-            await self.tv.close_position_market(self.contract, side_to_close, pos.qty)
+            await self.tv.close_position_market(
+                self.contract, side_to_close, pos.qty
+            )
             log.warning(f"flattened due to {reason}")
-            BUS.publish_nowait("order", {"src": "local", "event": "flatten", "reason": reason})
+            BUS.publish_nowait("order", {
+                "src": "local", "event": "flatten",
+                "reason": reason,
+            })
+            # Mirror exit to TradersPost
+            tp_ticker = self.contract.get("name", "ES")
+            asyncio.create_task(
+                self._fire_traderspost_webhook(
+                    action="exit",
+                    ticker=tp_ticker,
+                    qty=pos.qty,
+                )
+            )
         except Exception as e:  # noqa: BLE001
             log.error(f"flatten failed: {e!r}")
         finally:
